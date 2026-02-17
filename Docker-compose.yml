@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  mysqldb:
+    image: mysql:latest
+    restart: "unless-stopped"
+    environment:
+      MYSQL_ROOT_PASSWORD: pass
+      MYSQL_DATABASE: timesheetdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - timesheetvol:/var/lib/mysql
+
+  timesheet:
+    depends_on:
+      - mysqldb
+    image: timesheet-nourmessaoudi-4nids3:latest
+    restart: "unless-stopped"
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysqldb:3306/timesheetdb?createDatabaseIfNotExist=true"
+      SPRING_DATASOURCE_USERNAME: "root"
+      SPRING_DATASOURCE_PASSWORD: "pass"
+    stdin_open: true
+    tty: true
+
+volumes:
+  timesheetvol:
