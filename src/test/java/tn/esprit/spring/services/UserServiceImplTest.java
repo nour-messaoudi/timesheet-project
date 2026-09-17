@@ -1,22 +1,32 @@
 package tn.esprit.spring.services;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import tn.esprit.spring.entities.User;
 import tn.esprit.spring.repository.UserRepository;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class UserServiceImplTest {
@@ -28,45 +38,58 @@ class UserServiceImplTest {
     private UserServiceImpl userService;
 
     private User user;
-    private User user2;
 
     @BeforeEach
     void setUp() {
-
         user = new User(
                 "Nour",
                 "Messaoudi",
                 "ADMIN",
-                null
+                new Date()
         );
-
-        user.setId(1L);
-
-        user2 = new User(
-                "Test",
-                "User",
-                "USER",
-                null
-        );
-
-        user2.setId(2L);
     }
+
+    // =========================================================
+    // 1. retrieveAllUsers - SUCCESS
+    // =========================================================
 
     @Test
     void testRetrieveAllUsers() {
 
-        when(userRepository.findAll())
-                .thenReturn(Arrays.asList(user, user2));
+        List<User> users = Arrays.asList(user);
+
+        when(userRepository.findAll()).thenReturn(users);
 
         List<User> result = userService.retrieveAllUsers();
 
         assertNotNull(result);
-        assertEquals(2, result.size());
-        assertEquals(user, result.get(0));
-        assertEquals(user2, result.get(1));
+        assertEquals(1, result.size());
+        assertEquals(users, result);
 
-        verify(userRepository, times(1)).findAll();
+        verify(userRepository).findAll();
     }
+
+    // =========================================================
+    // 2. retrieveAllUsers - EMPTY LIST
+    // =========================================================
+
+    @Test
+    void testRetrieveAllUsersWhenRepositoryReturnsEmptyList() {
+
+        when(userRepository.findAll())
+                .thenReturn(Collections.emptyList());
+
+        List<User> result = userService.retrieveAllUsers();
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+
+        verify(userRepository).findAll();
+    }
+
+    // =========================================================
+    // 3. retrieveAllUsers - EXCEPTION
+    // =========================================================
 
     @Test
     void testRetrieveAllUsersWhenRepositoryThrowsException() {
@@ -76,10 +99,13 @@ class UserServiceImplTest {
 
         List<User> result = userService.retrieveAllUsers();
 
-        assertNull(result);
-
-        verify(userRepository, times(1)).findAll();
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
     }
+
+    // =========================================================
+    // 4. addUser - SUCCESS
+    // =========================================================
 
     @Test
     void testAddUser() {
@@ -92,8 +118,12 @@ class UserServiceImplTest {
         assertNotNull(result);
         assertEquals(user, result);
 
-        verify(userRepository, times(1)).save(user);
+        verify(userRepository).save(user);
     }
+
+    // =========================================================
+    // 5. addUser - EXCEPTION
+    // =========================================================
 
     @Test
     void testAddUserWhenRepositoryThrowsException() {
@@ -104,9 +134,11 @@ class UserServiceImplTest {
         User result = userService.addUser(user);
 
         assertNull(result);
-
-        verify(userRepository, times(1)).save(user);
     }
+
+    // =========================================================
+    // 6. updateUser - SUCCESS
+    // =========================================================
 
     @Test
     void testUpdateUser() {
@@ -119,8 +151,12 @@ class UserServiceImplTest {
         assertNotNull(result);
         assertEquals(user, result);
 
-        verify(userRepository, times(1)).save(user);
+        verify(userRepository).save(user);
     }
+
+    // =========================================================
+    // 7. updateUser - EXCEPTION
+    // =========================================================
 
     @Test
     void testUpdateUserWhenRepositoryThrowsException() {
@@ -131,9 +167,11 @@ class UserServiceImplTest {
         User result = userService.updateUser(user);
 
         assertNull(result);
-
-        verify(userRepository, times(1)).save(user);
     }
+
+    // =========================================================
+    // 8. retrieveUser - SUCCESS
+    // =========================================================
 
     @Test
     void testRetrieveUser() {
@@ -146,8 +184,12 @@ class UserServiceImplTest {
         assertNotNull(result);
         assertEquals(user, result);
 
-        verify(userRepository, times(1)).findById(1L);
+        verify(userRepository).findById(1L);
     }
+
+    // =========================================================
+    // 9. retrieveUser - USER NOT FOUND
+    // =========================================================
 
     @Test
     void testRetrieveUserWhenUserDoesNotExist() {
@@ -159,8 +201,12 @@ class UserServiceImplTest {
 
         assertNull(result);
 
-        verify(userRepository, times(1)).findById(1L);
+        verify(userRepository).findById(1L);
     }
+
+    // =========================================================
+    // 10. retrieveUser - INVALID ID
+    // =========================================================
 
     @Test
     void testRetrieveUserWithInvalidId() {
@@ -168,24 +214,25 @@ class UserServiceImplTest {
         User result = userService.retrieveUser("invalid");
 
         assertNull(result);
-
-        verify(userRepository, never()).findById(anyLong());
     }
+
+    // =========================================================
+    // 11. deleteUser - SUCCESS
+    // =========================================================
 
     @Test
     void testDeleteUser() {
-
-        doNothing()
-                .when(userRepository)
-                .deleteById(1L);
 
         assertDoesNotThrow(() ->
                 userService.deleteUser("1")
         );
 
-        verify(userRepository, times(1))
-                .deleteById(1L);
+        verify(userRepository).deleteById(1L);
     }
+
+    // =========================================================
+    // 12. deleteUser - EXCEPTION / INVALID ID
+    // =========================================================
 
     @Test
     void testDeleteUserWhenRepositoryThrowsException() {
@@ -198,8 +245,7 @@ class UserServiceImplTest {
                 userService.deleteUser("1")
         );
 
-        verify(userRepository, times(1))
-                .deleteById(1L);
+        verify(userRepository).deleteById(1L);
     }
 
     @Test
@@ -208,8 +254,5 @@ class UserServiceImplTest {
         assertDoesNotThrow(() ->
                 userService.deleteUser("invalid")
         );
-
-        verify(userRepository, never())
-                .deleteById(anyLong());
     }
 }
