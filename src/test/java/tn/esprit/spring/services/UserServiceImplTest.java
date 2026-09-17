@@ -1,10 +1,10 @@
 package tn.esprit.spring.services;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,7 +23,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import tn.esprit.spring.entities.User;
 import tn.esprit.spring.repository.UserRepository;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -49,10 +48,6 @@ class UserServiceImplTest {
         );
     }
 
-    // =========================================================
-    // 1. retrieveAllUsers - SUCCESS
-    // =========================================================
-
     @Test
     void testRetrieveAllUsers() {
 
@@ -69,10 +64,6 @@ class UserServiceImplTest {
         verify(userRepository).findAll();
     }
 
-    // =========================================================
-    // 2. retrieveAllUsers - EMPTY LIST
-    // =========================================================
-
     @Test
     void testRetrieveAllUsersWhenRepositoryReturnsEmptyList() {
 
@@ -87,10 +78,6 @@ class UserServiceImplTest {
         verify(userRepository).findAll();
     }
 
-    // =========================================================
-    // 3. retrieveAllUsers - EXCEPTION
-    // =========================================================
-
     @Test
     void testRetrieveAllUsersWhenRepositoryThrowsException() {
 
@@ -101,11 +88,9 @@ class UserServiceImplTest {
 
         assertNotNull(result);
         assertTrue(result.isEmpty());
-    }
 
-    // =========================================================
-    // 4. addUser - SUCCESS
-    // =========================================================
+        verify(userRepository).findAll();
+    }
 
     @Test
     void testAddUser() {
@@ -121,10 +106,6 @@ class UserServiceImplTest {
         verify(userRepository).save(user);
     }
 
-    // =========================================================
-    // 5. addUser - EXCEPTION
-    // =========================================================
-
     @Test
     void testAddUserWhenRepositoryThrowsException() {
 
@@ -134,11 +115,9 @@ class UserServiceImplTest {
         User result = userService.addUser(user);
 
         assertNull(result);
-    }
 
-    // =========================================================
-    // 6. updateUser - SUCCESS
-    // =========================================================
+        verify(userRepository).save(user);
+    }
 
     @Test
     void testUpdateUser() {
@@ -154,10 +133,6 @@ class UserServiceImplTest {
         verify(userRepository).save(user);
     }
 
-    // =========================================================
-    // 7. updateUser - EXCEPTION
-    // =========================================================
-
     @Test
     void testUpdateUserWhenRepositoryThrowsException() {
 
@@ -167,11 +142,9 @@ class UserServiceImplTest {
         User result = userService.updateUser(user);
 
         assertNull(result);
-    }
 
-    // =========================================================
-    // 8. retrieveUser - SUCCESS
-    // =========================================================
+        verify(userRepository).save(user);
+    }
 
     @Test
     void testRetrieveUser() {
@@ -187,10 +160,6 @@ class UserServiceImplTest {
         verify(userRepository).findById(1L);
     }
 
-    // =========================================================
-    // 9. retrieveUser - USER NOT FOUND
-    // =========================================================
-
     @Test
     void testRetrieveUserWhenUserDoesNotExist() {
 
@@ -204,10 +173,6 @@ class UserServiceImplTest {
         verify(userRepository).findById(1L);
     }
 
-    // =========================================================
-    // 10. retrieveUser - INVALID ID
-    // =========================================================
-
     @Test
     void testRetrieveUserWithInvalidId() {
 
@@ -215,10 +180,6 @@ class UserServiceImplTest {
 
         assertNull(result);
     }
-
-    // =========================================================
-    // 11. deleteUser - SUCCESS
-    // =========================================================
 
     @Test
     void testDeleteUser() {
@@ -229,10 +190,6 @@ class UserServiceImplTest {
 
         verify(userRepository).deleteById(1L);
     }
-
-    // =========================================================
-    // 12. deleteUser - EXCEPTION / INVALID ID
-    // =========================================================
 
     @Test
     void testDeleteUserWhenRepositoryThrowsException() {
@@ -254,5 +211,31 @@ class UserServiceImplTest {
         assertDoesNotThrow(() ->
                 userService.deleteUser("invalid")
         );
+    }
+
+    @Test
+    void testAddUserWithNullResult() {
+
+        when(userRepository.save(user))
+                .thenReturn(null);
+
+        User result = userService.addUser(user);
+
+        assertNull(result);
+
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void testUpdateUserWithNullResult() {
+
+        when(userRepository.save(user))
+                .thenReturn(null);
+
+        User result = userService.updateUser(user);
+
+        assertNull(result);
+
+        verify(userRepository).save(user);
     }
 }
