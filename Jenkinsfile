@@ -38,10 +38,27 @@ pipeline {
         }
 
         stage('DOCKER BUILD') {
-    steps {
-        sh 'docker build -t timesheet-project_timesheet:latest .'
-    }
-}
+            steps {
+                sh 'docker build -t timesheet-project_timesheet:latest .'
+            }
+        }
+
+        stage('DOCKER DEPLOY') {
+            steps {
+                sh '''
+                    docker rm -f timesheet || true
+
+                    docker run -d \
+                      --name timesheet \
+                      --network timesheet-network \
+                      -e SPRING_DATASOURCE_URL="jdbc:mysql://mysqldb:3306/timesheet?createDatabaseIfNotExist=true" \
+                      -e SPRING_DATASOURCE_USERNAME=root \
+                      -e SPRING_DATASOURCE_PASSWORD=root \
+                      -p 8082:8082 \
+                      timesheet-project_timesheet:latest
+                '''
+            }
+        }
     }
 
     post {
