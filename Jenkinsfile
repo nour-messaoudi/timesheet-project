@@ -37,12 +37,11 @@ pipeline {
             }
         }
 
-        stage('DOCKER TEST') {
-            steps {
-                sh 'docker version'
-                sh 'docker ps'
-            }
-        }
+        stage('DOCKER BUILD') {
+    steps {
+        sh 'docker build -t timesheet-project_timesheet:latest .'
+    }
+}
     }
 
     post {
