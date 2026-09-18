@@ -1,0 +1,13 @@
+repos:
+  - repo: https://github.com/hmrc/security-git-hooks
+    rev: v1.0.0-beta9
+    hooks:
+      - id: secrets_filecontent
+        exclude_types:
+          - binary
+
+      - id: secrets_filename
+        exclude_types:
+          - binary
+
+      - id: hooks_version_check
