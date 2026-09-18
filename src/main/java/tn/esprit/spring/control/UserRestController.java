@@ -85,7 +85,7 @@ public class UserRestController {
     }
 @GetMapping("/hello")
 public String hello() {
-    return "Hello from Timesheet DevOps! - Version 1";
+    return "Hello from Timesheet DevOps! - Version 2";
 }
 
 }
