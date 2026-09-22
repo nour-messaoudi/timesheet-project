@@ -1,0 +1,869 @@
+{
+  "version": "2.6.2",
+  "summary": {
+    "title": "Timesheet DevSecOps Threat Model",
+    "owner": "Nour Messaoudi",
+    "description": "The Timesheet application is a Spring Boot application that provides REST APIs for managing timesheet-related data. The application communicates with a MySQL database and is developed and deployed using a DevSecOps CI/CD pipeline.",
+    "id": 0
+  },
+  "detail": {
+    "contributors": [],
+    "diagrams": [
+      {
+        "id": 0,
+        "title": "Timesheet Application DFD",
+        "diagramType": "STRIDE",
+        "placeholder": "New STRIDE diagram description",
+        "thumbnail": "./public/content/images/thumbnail.stride.jpg",
+        "version": "2.6.2",
+        "cells": [
+          {
+            "position": {
+              "x": 315,
+              "y": 105
+            },
+            "size": {
+              "width": 240,
+              "height": 170
+            },
+            "attrs": {
+              "label": {
+                "text": "Application Trust Boundary"
+              }
+            },
+            "visible": true,
+            "shape": "trust-boundary-box",
+            "zIndex": -1,
+            "id": "4b257e12-8ffc-4b12-9d18-5e766556adc3",
+            "data": {
+              "type": "tm.BoundaryBox",
+              "name": "Application Trust Boundary",
+              "description": "Trusted application environment containing the Timesheet Spring Boot application.",
+              "isTrustBoundary": true,
+              "hasOpenThreats": false,
+              "crossingFlows": [
+                "a199bbc7-3fda-44e5-bb61-da815725aba2",
+                "7dc597e3-62ee-46b9-b890-72ea0ff06d12",
+                "485103fd-d35d-4a4f-906a-0b59b5ea3a71"
+              ],
+              "containedElements": [
+                "ad5f77ec-960e-47b5-aa50-b1cea17e5e3f"
+              ]
+            }
+          },
+          {
+            "position": {
+              "x": 315,
+              "y": 390
+            },
+            "size": {
+              "width": 240,
+              "height": 130
+            },
+            "attrs": {
+              "label": {
+                "text": "Database Trust Boundary"
+              }
+            },
+            "visible": true,
+            "shape": "trust-boundary-box",
+            "zIndex": -1,
+            "id": "fbe3883c-6732-4c5e-be9b-a08d166d9566",
+            "data": {
+              "type": "tm.BoundaryBox",
+              "name": "Database Trust Boundary",
+              "description": "Trusted database environment containing the Timesheet application data.",
+              "isTrustBoundary": true,
+              "hasOpenThreats": false,
+              "crossingFlows": [
+                "a199bbc7-3fda-44e5-bb61-da815725aba2",
+                "485103fd-d35d-4a4f-906a-0b59b5ea3a71"
+              ],
+              "containedElements": [
+                "0d010a2f-bdd2-4f27-bf19-481ea3ab28cc"
+              ]
+            }
+          },
+          {
+            "position": {
+              "x": -10,
+              "y": 160
+            },
+            "size": {
+              "width": 112.5,
+              "height": 60
+            },
+            "attrs": {
+              "text": {
+                "text": "User"
+              },
+              "body": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "strokeDasharray": null
+              }
+            },
+            "visible": true,
+            "shape": "actor",
+            "zIndex": 2,
+            "ports": {
+              "groups": {
+                "top": {
+                  "position": "top",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "position": "right",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "bottom": {
+                  "position": "bottom",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "left": {
+                  "position": "left",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                }
+              },
+              "items": [
+                {
+                  "group": "top",
+                  "id": "df448aa1-aa85-40ce-ad2f-9e24aa6c525e"
+                },
+                {
+                  "group": "right",
+                  "id": "09441647-b055-4383-946f-0f5e6aaca7e9"
+                },
+                {
+                  "group": "bottom",
+                  "id": "56e5391b-79ee-42cc-a78e-53730aaa230e"
+                },
+                {
+                  "group": "left",
+                  "id": "b02ebfbf-613d-4bad-a62c-a9677cf02e85"
+                }
+              ]
+            },
+            "id": "688c08e5-9661-45ac-9a28-3d4302ff42e7",
+            "data": {
+              "type": "tm.Actor",
+              "name": "User",
+              "description": "User interacting with the Timesheet application through a client or web browser.",
+              "isTrustBoundary": false,
+              "outOfScope": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "providesAuthentication": false,
+              "threats": [
+                {
+                  "id": "01bdc766-703c-439b-8ab9-c87cb24e0b49",
+                  "title": "Unauthorized User Impersonation",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Spoofing",
+                  "description": "An attacker may impersonate a legitimate Timesheet user and access the application using stolen or fraudulent credentials.",
+                  "mitigation": "Implement strong authentication, secure credential management, and appropriate session management for Timesheet users.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 5,
+                  "score": ""
+                }
+              ],
+              "threatFrequency": {
+                "spoofing": 1,
+                "repudiation": 0
+              }
+            }
+          },
+          {
+            "position": {
+              "x": 350,
+              "y": 135
+            },
+            "size": {
+              "width": 170,
+              "height": 110
+            },
+            "attrs": {
+              "text": {
+                "text": "Timesheet \nSpring Boot\n Application"
+              },
+              "body": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "strokeDasharray": null
+              }
+            },
+            "visible": true,
+            "shape": "process",
+            "zIndex": 3,
+            "ports": {
+              "groups": {
+                "top": {
+                  "position": "top",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "position": "right",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "bottom": {
+                  "position": "bottom",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "left": {
+                  "position": "left",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                }
+              },
+              "items": [
+                {
+                  "group": "top",
+                  "id": "683297c2-e488-4455-90cf-9273fbe72640"
+                },
+                {
+                  "group": "right",
+                  "id": "2e563847-24cf-4534-99ab-937723918d72"
+                },
+                {
+                  "group": "bottom",
+                  "id": "7474b057-abad-4a47-92ee-122cc7b2649a"
+                },
+                {
+                  "group": "left",
+                  "id": "2dce9573-c00d-48dd-b113-422aa702039e"
+                }
+              ]
+            },
+            "id": "ad5f77ec-960e-47b5-aa50-b1cea17e5e3f",
+            "data": {
+              "type": "tm.Process",
+              "name": "Timesheet \nSpring Boot\n Application",
+              "description": "Spring Boot application exposing REST APIs for Timesheet management.",
+              "outOfScope": false,
+              "isTrustBoundary": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "handlesCardPayment": false,
+              "handlesGoodsOrServices": false,
+              "isWebApplication": true,
+              "privilegeLevel": "",
+              "threats": [
+                {
+                  "id": "b407e89d-5acb-432a-9283-8c11c182a583",
+                  "title": "Unauthorized Application Data Modification",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "An attacker may manipulate application requests or exploit application weaknesses to modify Timesheet data without authorization.",
+                  "mitigation": "Implement server-side input validation, authorization checks, and secure data modification controls.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 6,
+                  "score": ""
+                },
+                {
+                  "id": "2a8f3e7d-1f73-4e83-a619-8f74c4bd42bd",
+                  "title": "Sensitive Information Exposure",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Application vulnerabilities or improperly handled responses may expose sensitive Timesheet or user information.",
+                  "mitigation": "Apply access controls, minimize sensitive information in responses, protect sensitive data, and avoid exposing internal application details.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 7,
+                  "score": ""
+                },
+                {
+                  "id": "ef7f0e02-0f92-42ad-926b-089cf9c50a5f",
+                  "title": "Application Resource Exhaustion",
+                  "status": "Open",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "An attacker may exploit the application by sending excessive or specially crafted requests that consume application resources.",
+                  "mitigation": "Implement rate limiting, request validation, resource limits, and appropriate monitoring.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 8,
+                  "score": ""
+                },
+                {
+                  "id": "9aaa280a-6fab-4441-983d-1e9b49d88fb1",
+                  "title": "Unauthorized Privilege Escalation",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Elevation of privilege",
+                  "description": "A low-privileged user may exploit insufficient authorization controls to access functions or data reserved for higher-privileged users.",
+                  "mitigation": "Enforce server-side authorization for every protected operation and apply the principle of least privilege.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 9,
+                  "score": ""
+                }
+              ],
+              "threatFrequency": {
+                "spoofing": 0,
+                "tampering": 1,
+                "repudiation": 0,
+                "informationDisclosure": 1,
+                "denialOfService": 1,
+                "elevationOfPrivilege": 1
+              }
+            }
+          },
+          {
+            "position": {
+              "x": 375,
+              "y": 440
+            },
+            "size": {
+              "width": 120,
+              "height": 60
+            },
+            "attrs": {
+              "text": {
+                "text": "MySQL Database"
+              },
+              "topLine": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "strokeDasharray": null
+              },
+              "bottomLine": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "strokeDasharray": null
+              }
+            },
+            "visible": true,
+            "shape": "store",
+            "zIndex": 4,
+            "ports": {
+              "groups": {
+                "top": {
+                  "position": "top",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "position": "right",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "bottom": {
+                  "position": "bottom",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                },
+                "left": {
+                  "position": "left",
+                  "attrs": {
+                    "circle": {
+                      "r": 4,
+                      "magnet": true,
+                      "stroke": "#5F95FF",
+                      "strokeWidth": 1,
+                      "fill": "#fff",
+                      "style": {
+                        "visibility": "hidden"
+                      }
+                    }
+                  }
+                }
+              },
+              "items": [
+                {
+                  "group": "top",
+                  "id": "7919c783-8565-4d57-8521-c99bb2e6f5ae"
+                },
+                {
+                  "group": "right",
+                  "id": "5f9990b4-3cb6-46e4-9d3c-3e6d9f221a9f"
+                },
+                {
+                  "group": "bottom",
+                  "id": "83fcd117-7f5e-4294-82ed-3c3e31249ae8"
+                },
+                {
+                  "group": "left",
+                  "id": "758b42a8-f69a-4944-8524-bd4f9d9daa81"
+                }
+              ]
+            },
+            "id": "0d010a2f-bdd2-4f27-bf19-481ea3ab28cc",
+            "data": {
+              "type": "tm.Store",
+              "name": "MySQL Database",
+              "description": "MySQL database storing Timesheet application data.",
+              "outOfScope": false,
+              "isTrustBoundary": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "isALog": false,
+              "isEncrypted": false,
+              "isSigned": false,
+              "storesCredentials": false,
+              "storesInventory": false,
+              "threats": [
+                {
+                  "id": "fc5509f3-0aa5-41c8-a75e-1f3647043cca",
+                  "title": "Unauthorized Database Modification",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "An attacker who gains unauthorized database access may modify Timesheet data.",
+                  "mitigation": "Apply least-privilege database permissions, restrict database access, and monitor database modifications.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 14,
+                  "score": ""
+                },
+                {
+                  "id": "92eba8b7-f902-46d9-ad4a-97e22bdf6158",
+                  "title": "Unauthorized Database Access",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "An attacker may gain unauthorized access to sensitive data stored in the Timesheet database.",
+                  "mitigation": "Restrict database access, use strong authentication, apply least privilege, and protect sensitive data.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 15,
+                  "score": ""
+                },
+                {
+                  "id": "1277f0e6-b853-4df9-b7b7-c5670e851a2b",
+                  "title": "Database Availability Attack",
+                  "status": "Open",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "An attacker may exhaust database resources or disrupt database availability.",
+                  "mitigation": "Apply resource limits, monitoring, backup and recovery mechanisms, and restrict unauthorized database access.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 16,
+                  "score": ""
+                }
+              ],
+              "threatFrequency": {
+                "tampering": 1,
+                "repudiation": 0,
+                "informationDisclosure": 1,
+                "denialOfService": 1
+              }
+            }
+          },
+          {
+            "shape": "flow",
+            "attrs": {
+              "line": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "width": 200,
+            "height": 100,
+            "zIndex": 10,
+            "connector": "smooth",
+            "data": {
+              "type": "tm.Flow",
+              "name": "Database Results",
+              "description": "Data returned by the MySQL database to the application.",
+              "outOfScope": false,
+              "isTrustBoundary": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "isBidirectional": false,
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "protocol": "",
+              "threats": [
+                {
+                  "id": "722cdfa6-33a4-4f0c-b498-c12aa0c60892",
+                  "title": "Sensitive Database Results Exposure",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Sensitive information returned by the database could be exposed through application responses or insufficient access controls.",
+                  "mitigation": "Apply authorization checks and return only the data required by the requesting user.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 18,
+                  "score": ""
+                },
+                {
+                  "id": "c6a4b3b5-96af-4693-8918-b494bffc3b5c",
+                  "title": "Manipulation of Returned Data",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "Unexpected or manipulated database results could affect application behavior if returned data is not properly validated.",
+                  "mitigation": "Validate data received from the database before using it in application processing.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 19,
+                  "score": ""
+                }
+              ],
+              "trustBoundaryIds": [
+                "4b257e12-8ffc-4b12-9d18-5e766556adc3",
+                "fbe3883c-6732-4c5e-be9b-a08d166d9566"
+              ],
+              "threatFrequency": {
+                "tampering": 1,
+                "informationDisclosure": 1,
+                "denialOfService": 0
+              }
+            },
+            "labels": [
+              "Database Results"
+            ],
+            "id": "a199bbc7-3fda-44e5-bb61-da815725aba2",
+            "source": {
+              "cell": "0d010a2f-bdd2-4f27-bf19-481ea3ab28cc",
+              "port": "5f9990b4-3cb6-46e4-9d3c-3e6d9f221a9f"
+            },
+            "target": {
+              "cell": "ad5f77ec-960e-47b5-aa50-b1cea17e5e3f",
+              "port": "2e563847-24cf-4534-99ab-937723918d72"
+            },
+            "vertices": [
+              {
+                "x": 660,
+                "y": 470
+              },
+              {
+                "x": 660,
+                "y": 260
+              },
+              {
+                "x": 640,
+                "y": 190
+              }
+            ]
+          },
+          {
+            "shape": "flow",
+            "attrs": {
+              "line": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "width": 200,
+            "height": 100,
+            "zIndex": 10,
+            "connector": "smooth",
+            "data": {
+              "type": "tm.Flow",
+              "name": "HTTP / REST Requests",
+              "description": "HTTP requests sent by the user to the Timesheet REST API.",
+              "outOfScope": false,
+              "isTrustBoundary": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "isBidirectional": false,
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "protocol": "",
+              "threats": [
+                {
+                  "id": "7c5ae5f6-4d96-4b95-8ef9-0daa424a62f5",
+                  "title": "Request Tampering",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "An attacker may modify HTTP request parameters or payloads to manipulate Timesheet application data.",
+                  "mitigation": "Validate and sanitize input data and enforce server-side authorization checks before modifying application data.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 2,
+                  "score": ""
+                },
+                {
+                  "id": "e39aa543-1968-4a07-b3ce-935bb24bf3b3",
+                  "title": "Sensitive Data Exposure",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Sensitive application data could be exposed if communications or API responses are not adequately protected.",
+                  "mitigation": "Use HTTPS/TLS for client-server communication and avoid exposing sensitive information in API responses.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 3,
+                  "score": ""
+                },
+                {
+                  "id": "131e4915-94e4-44a0-999f-db42c434b9c2",
+                  "title": "API Denial of Service",
+                  "status": "Open",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "An attacker may send a large number of requests to the Timesheet REST API and make the application unavailable.",
+                  "mitigation": "Implement rate limiting, request validation, and resource protection to limit abusive requests.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 4,
+                  "score": ""
+                }
+              ],
+              "trustBoundaryIds": [
+                "4b257e12-8ffc-4b12-9d18-5e766556adc3"
+              ],
+              "threatFrequency": {
+                "tampering": 1,
+                "informationDisclosure": 1,
+                "denialOfService": 1
+              }
+            },
+            "labels": [
+              "HTTP / REST Requests"
+            ],
+            "id": "7dc597e3-62ee-46b9-b890-72ea0ff06d12",
+            "source": {
+              "cell": "688c08e5-9661-45ac-9a28-3d4302ff42e7",
+              "port": "09441647-b055-4383-946f-0f5e6aaca7e9"
+            },
+            "target": {
+              "cell": "ad5f77ec-960e-47b5-aa50-b1cea17e5e3f",
+              "port": "2dce9573-c00d-48dd-b113-422aa702039e"
+            },
+            "vertices": []
+          },
+          {
+            "shape": "flow",
+            "attrs": {
+              "line": {
+                "stroke": "red",
+                "strokeWidth": 2.5,
+                "targetMarker": {
+                  "name": "block"
+                },
+                "sourceMarker": {
+                  "name": ""
+                },
+                "strokeDasharray": null
+              }
+            },
+            "width": 200,
+            "height": 100,
+            "zIndex": 10,
+            "connector": "smooth",
+            "data": {
+              "type": "tm.Flow",
+              "name": "JDBC / SQL Queries",
+              "description": "SQL queries and database operations \nperformed by the application.",
+              "outOfScope": false,
+              "isTrustBoundary": false,
+              "reasonOutOfScope": "",
+              "hasOpenThreats": true,
+              "isBidirectional": false,
+              "isEncrypted": false,
+              "isPublicNetwork": false,
+              "protocol": "",
+              "threats": [
+                {
+                  "id": "265ef772-c1b7-4593-939a-ca6248950a9c",
+                  "title": "SQL Query Manipulation",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Tampering",
+                  "description": "An attacker may manipulate database queries through malicious input and alter Timesheet data.",
+                  "mitigation": "Use parameterized queries, ORM protections, input validation, and avoid dynamically constructed SQL queries.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 11,
+                  "score": ""
+                },
+                {
+                  "id": "501e0096-34af-4f51-b8fb-49a60d85d21a",
+                  "title": "Unauthorized Database Data Exposure",
+                  "status": "Open",
+                  "severity": "High",
+                  "type": "Information disclosure",
+                  "description": "Sensitive database information may be exposed if database access is not properly controlled.",
+                  "mitigation": "Enforce database access controls, use least-privilege database accounts, and protect sensitive data in transit.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 12,
+                  "score": ""
+                },
+                {
+                  "id": "ecfe7477-a0d5-4216-b628-3641b0cab69b",
+                  "title": "Database Resource Exhaustion",
+                  "status": "Open",
+                  "severity": "Medium",
+                  "type": "Denial of service",
+                  "description": "Malicious or excessive database requests may consume database resources and affect application availability.",
+                  "mitigation": "Use query limits, connection management, resource controls, and monitoring.",
+                  "modelType": "STRIDE",
+                  "new": false,
+                  "number": 13,
+                  "score": ""
+                }
+              ],
+              "trustBoundaryIds": [
+                "4b257e12-8ffc-4b12-9d18-5e766556adc3",
+                "fbe3883c-6732-4c5e-be9b-a08d166d9566"
+              ],
+              "threatFrequency": {
+                "tampering": 1,
+                "informationDisclosure": 1,
+                "denialOfService": 1
+              }
+            },
+            "labels": [
+              "JDBC / SQL Queries"
+            ],
+            "id": "485103fd-d35d-4a4f-906a-0b59b5ea3a71",
+            "source": {
+              "cell": "ad5f77ec-960e-47b5-aa50-b1cea17e5e3f",
+              "port": "7474b057-abad-4a47-92ee-122cc7b2649a"
+            },
+            "target": {
+              "cell": "0d010a2f-bdd2-4f27-bf19-481ea3ab28cc",
+              "port": "7919c783-8565-4d57-8521-c99bb2e6f5ae"
+            },
+            "vertices": []
+          }
+        ]
+      }
+    ],
+    "diagramTop": 1,
+    "reviewer": "",
+    "threatTop": 19
+  }
+}
