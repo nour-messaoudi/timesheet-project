@@ -1,0 +1,21 @@
+{
+  "requirements": [
+    {
+      "id": "SEC-001",
+      "threat": "Unauthorized Application Data Modification",
+      "description": "The API must reject user creation requests when mandatory fields are missing.",
+      "endpoint": "POST /timesheet-devops/user/add-user",
+      "expectedStatus": 400,
+      "testClass": "UserRestControllerSecurityTest"
+    },
+    {
+      "id": "SEC-002",
+      "threat": "Request Tampering",
+      "description": "The API must reject malformed user identifiers before they reach the service layer.",
+      "endpoint": "GET /timesheet-devops/user/retrieve-user/{user-id}",
+      "expectedStatus": 400,
+      "testClass": "UserRestControllerSecurityTest",
+      "testMethod": "retrieveUserWithTamperedIdMustBeRejected"
+    }
+  ]
+}
