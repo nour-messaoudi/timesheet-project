@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 import tn.esprit.spring.dto.UserDTO;
 import tn.esprit.spring.entities.User;
 import tn.esprit.spring.services.IUserService;
+import org.springframework.http.ResponseEntity;
+import javax.validation.Valid;
 
 @RestController
 @RequestMapping("/user")
@@ -34,20 +36,26 @@ public class UserRestController {
     }
 
     @GetMapping("/retrieve-user/{user-id}")
-    public UserDTO retrieveUser(
-            @PathVariable("user-id") String userId) {
+public ResponseEntity<UserDTO> retrieveUser(
+        @PathVariable("user-id") String userId) {
 
-        User user = userService.retrieveUser(userId);
-
-        if (user == null) {
-            return null;
-        }
-
-        return convertToDTO(user);
+    try {
+        Long.parseLong(userId);
+    } catch (NumberFormatException e) {
+        return ResponseEntity.badRequest().build();
     }
 
+    User user = userService.retrieveUser(userId);
+
+    if (user == null) {
+        return ResponseEntity.notFound().build();
+    }
+
+    return ResponseEntity.ok(convertToDTO(user));
+}
+
     @PostMapping("/add-user")
-    public UserDTO addUser(@RequestBody UserDTO userDTO) {
+    public UserDTO addUser(@Valid @RequestBody UserDTO userDTO) {
 
         User user = convertToEntity(userDTO);
 

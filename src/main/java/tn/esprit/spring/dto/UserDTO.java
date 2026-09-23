@@ -2,24 +2,30 @@ package tn.esprit.spring.dto;
 
 import java.util.Date;
 
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
+
 public class UserDTO {
 
     private Long id;
+
+    @NotBlank(message = "First name is required")
     private String firstName;
+
+    @NotBlank(message = "Last name is required")
     private String lastName;
+
+    @NotBlank(message = "Role is required")
     private String role;
+
+    @NotNull(message = "Date of birth is required")
     private Date dateNaissance;
 
     public UserDTO() {
     }
 
-    public UserDTO(
-            Long id,
-            String firstName,
-            String lastName,
-            String role,
-            Date dateNaissance) {
-
+    public UserDTO(Long id, String firstName, String lastName,
+                   String role, Date dateNaissance) {
         this.id = id;
         this.firstName = firstName;
         this.lastName = lastName;
