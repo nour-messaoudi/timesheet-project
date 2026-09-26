@@ -3,10 +3,14 @@ repos:
     rev: v1.0.0-beta9
     hooks:
       - id: secrets_filecontent
+        additional_dependencies:
+          - setuptools==69.5.1
         exclude_types:
           - binary
 
       - id: secrets_filename
+        additional_dependencies:
+          - setuptools==69.5.1
         exclude_types:
           - binary
 

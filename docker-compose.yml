@@ -1,22 +1,87 @@
 services:
 
   mysqldb:
-    image: mysql:latest
+    image: mysql:9.6
     container_name: mysqldb
+
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: timesheet
-    ports:
-      - "3306:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+    networks:
+      - timesheet-network
+
+    restart: unless-stopped
+
 
   timesheet:
-    image: timesheet-project_timesheet:latest
+    image: ${DOCKER_IMAGE}
+
     container_name: timesheet
+
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysqldb:3306/timesheet?createDatabaseIfNotExist=true
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+
     ports:
       - "8082:8082"
+
     depends_on:
       - mysqldb
+
+    networks:
+      - timesheet-network
+
+    restart: unless-stopped
+
+
+  prometheus:
+    image: prom/prometheus:latest
+
+    container_name: prometheus
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+    depends_on:
+      - timesheet
+
+    networks:
+      - timesheet-network
+
+    restart: unless-stopped
+
+
+  grafana:
+    image: grafana/grafana:latest
+
+    container_name: grafana
+
+    ports:
+      - "3000:3000"
+
+    depends_on:
+      - prometheus
+
+    networks:
+      - timesheet-network
+
+    restart: unless-stopped
+
+
+networks:
+
+  timesheet-network:
+    driver: bridge
+
+
+volumes:
+
+  mysql_data:

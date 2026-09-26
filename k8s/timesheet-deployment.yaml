@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: timesheet
+  namespace: timesheet-platform
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: timesheet
+
+  template:
+    metadata:
+      labels:
+        app: timesheet
+
+    spec:
+      containers:
+        - name: timesheet
+          image: timesheet-project_timesheet:latest
+          imagePullPolicy: Never
+
+          ports:
+            - containerPort: 8082
+
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:mysql://mysqldb:3306/timesheet?createDatabaseIfNotExist=true
+
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_USER
+
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_PASSWORD

@@ -1,1 +1,8 @@
+.env
+*.pem
+*.key
 target/
+
+# Security test files
+fake.aws.file
+fake.key.pem
