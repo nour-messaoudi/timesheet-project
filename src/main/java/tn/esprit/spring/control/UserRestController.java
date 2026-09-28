@@ -14,7 +14,7 @@ import tn.esprit.spring.dto.UserDTO;
 import tn.esprit.spring.entities.User;
 import tn.esprit.spring.services.IUserService;
 import org.springframework.http.ResponseEntity;
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/user")

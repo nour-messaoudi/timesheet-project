@@ -3,6 +3,17 @@ pipeline {
     agent any
 
     // ============================================================
+    // OPTIONS
+    // ============================================================
+
+    options {
+        skipDefaultCheckout(true)          // évite le double checkout
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    // ============================================================
     // ENVIRONMENT
     // ============================================================
 
@@ -10,15 +21,24 @@ pipeline {
 
         // Docker
         DOCKER_REPOSITORY = 'nouuur/timesheet'
-        IMAGE_TAG         = "${BUILD_NUMBER}"
         DOCKER_IMAGE      = "${DOCKER_REPOSITORY}:${BUILD_NUMBER}"
 
         // Kubernetes
         K8S_NAMESPACE     = 'timesheet-platform'
+        APP_SERVICE       = 'timesheet'      // nom du Service k8s de l'app
+        PROM_SERVICE      = 'prometheus'     // nom du Service k8s de Prometheus
 
         // Application
-        APP_PORT          = '8082'
+        APP_PORT          = '8082'           // port du Service k8s
         APP_CONTEXT_PATH  = '/timesheet-devops'
+
+        // Ports locaux utilisés par kubectl port-forward
+        LOCAL_APP_PORT    = '18082'
+        LOCAL_PROM_PORT   = '19090'
+
+        // DevSecOps
+        REPORTS_DIR       = 'reports'
+        TRIVY_TIMEOUT     = '20m'
     }
 
     stages {
@@ -29,48 +49,21 @@ pipeline {
 
         stage('TOOL CHECK') {
             steps {
-
                 sh '''
                     set -e
-
-                    echo "======================================"
-                    echo "             TOOL CHECK"
-                    echo "======================================"
-
-                    echo ""
-                    echo "Java:"
+                    echo "============ TOOL CHECK ============"
                     java -version
-
-                    echo ""
-                    echo "Maven:"
                     mvn -version
-
-                    echo ""
-                    echo "Docker:"
                     docker --version
-
-                    echo ""
-                    echo "kubectl:"
                     kubectl version --client
-
-                    echo ""
-                    echo "Trivy:"
                     trivy --version
-
-                    echo ""
-                    echo "Git:"
                     git --version
-
-                    echo ""
-                    echo "Pre-commit:"
                     pre-commit --version
-
-                    echo ""
+                    curl --version | head -1
                     echo "All required tools are available."
                 '''
             }
         }
-
 
         // ============================================================
         // 2. CHECKOUT FROM GITHUB
@@ -78,562 +71,407 @@ pipeline {
 
         stage('CHECKOUT FROM GITHUB') {
             steps {
-
-                echo "======================================"
-                echo "       CHECKOUT FROM GITHUB"
-                echo "======================================"
-
                 checkout([
                     $class: 'GitSCM',
-
-                    branches: [
-                        [name: '*/master']
-                    ],
-
+                    branches: [[name: '*/master']],
                     userRemoteConfigs: [[
                         url: 'https://github.com/nour-messaoudi/timesheet-project.git',
                         credentialsId: 'github-token'
                     ]],
-
-                    extensions: [
-                        [$class: 'CleanBeforeCheckout']
-                    ]
+                    extensions: [[$class: 'CleanBeforeCheckout']]
                 ])
 
                 sh '''
-                    echo ""
-                    echo "Current commit:"
-                    git log -1 --oneline
-
-                    echo ""
-                    echo "Current branch:"
-                    git branch --show-current
+                    set -e
+                    echo "Commit : $(git log -1 --oneline)"
+                    mkdir -p "${REPORTS_DIR}"
+                    chmod 777 "${REPORTS_DIR}"
                 '''
             }
         }
 
+        // ============================================================
+        // 3. SECRET SECURITY SCAN  (shift-left : avant le build)
+        // ============================================================
+
+        stage('SECRET SECURITY SCAN') {
+            steps {
+                sh '''
+                    set -e
+                    echo "============ SECRET SECURITY SCAN ============"
+                    pre-commit run --all-files
+                '''
+            }
+        }
 
         // ============================================================
-        // 3. CLEAN PROJECT
+        // 4. CLEAN PROJECT
         // ============================================================
 
         stage('CLEAN PROJECT') {
             steps {
-
-                sh '''
-                    set -e
-
-                    echo "======================================"
-                    echo "           CLEAN PROJECT"
-                    echo "======================================"
-
-                    mvn clean
-
-                    echo ""
-                    echo "Project cleaned successfully."
-                '''
+                sh 'mvn -B clean'
             }
         }
 
-
         // ============================================================
-        // 4. BUILD ARTIFACT
+        // 5. BUILD ARTIFACT
         // ============================================================
 
         stage('BUILD ARTIFACT') {
             steps {
-
                 sh '''
                     set -e
-
-                    echo "======================================"
-                    echo "           BUILD ARTIFACT"
-                    echo "======================================"
-
-                    mvn package -DskipTests
-
-                    echo ""
-                    echo "Generated artifacts:"
+                    mvn -B package -DskipTests
                     ls -lh target/*.jar
-
-                    echo ""
-                    echo "Artifact build completed successfully."
                 '''
             }
         }
 
-
         // ============================================================
-        // 5. UNIT & SECURITY TESTS
+        // 6. UNIT & SECURITY TESTS  (+ rapport de couverture JaCoCo)
         // ============================================================
 
         stage('UNIT & SECURITY TESTS') {
             steps {
-
-                sh '''
-                    set -e
-
-                    echo "======================================"
-                    echo "       UNIT & SECURITY TESTS"
-                    echo "======================================"
-
-                    mvn test
-                '''
-
-                junit(
-                    testResults: 'target/surefire-reports/*.xml',
-                    allowEmptyResults: false
-                )
+                sh 'mvn -B test jacoco:report'
+            }
+            post {
+                always {
+                    junit(
+                        testResults: 'target/surefire-reports/*.xml',
+                        allowEmptyResults: false
+                    )
+                }
             }
         }
 
-
         // ============================================================
-        // 6. SONARQUBE / CODE QUALITY
+        // 7. SAST - SONARQUBE
         // ============================================================
 
-        stage('SONARQUBE / CODE QUALITY') {
+        stage('SAST - SONARQUBE') {
             steps {
-
                 withSonarQubeEnv('SonarQube') {
-
-                    withCredentials([
-                        string(
-                            credentialsId: 'sonar-token',
-                            variable: 'SONAR_TOKEN'
-                        )
-                    ]) {
-
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                         sh '''
                             set -e
-
-                            echo "======================================"
-                            echo "       SONARQUBE / CODE QUALITY"
-                            echo "======================================"
-
-                            mvn sonar:sonar \
-                                -Dsonar.token="${SONAR_TOKEN}"
+                            mvn -B sonar:sonar \
+                                -Dsonar.token="${SONAR_TOKEN}" \
+                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                         '''
                     }
                 }
             }
         }
 
-
         // ============================================================
-        // 7. SECRET SECURITY SCAN
+        // 8. QUALITY GATE  (nécessite le webhook SonarQube -> Jenkins)
         // ============================================================
 
-        stage('SECRET SECURITY SCAN') {
+        stage('QUALITY GATE') {
             steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
 
+        // ============================================================
+        // 9. SCA - DEPENDENCIES SCAN (Trivy fs sur pom.xml)
+        // ============================================================
+
+        stage('SCA - DEPENDENCIES SCAN') {
+            steps {
                 sh '''
                     set -e
-
-                    echo "======================================"
-                    echo "         SECRET SECURITY SCAN"
-                    echo "======================================"
-
-                    pre-commit run --all-files
-
-                    echo ""
-                    echo "Secret security scan completed successfully."
+                    trivy fs \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --timeout "${TRIVY_TIMEOUT}" \
+                        --exit-code 0 \
+                        --format table \
+                        --output "${REPORTS_DIR}/trivy-sca.txt" \
+                        .
+                    cat "${REPORTS_DIR}/trivy-sca.txt"
                 '''
             }
         }
 
+        // ============================================================
+        // 10. IaC SCAN (Dockerfile + manifests k8s)
+        // ============================================================
+
+        stage('IaC SECURITY SCAN') {
+            steps {
+                sh '''
+                    set -e
+                    trivy config \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table \
+                        --output "${REPORTS_DIR}/trivy-iac.txt" \
+                        .
+                    cat "${REPORTS_DIR}/trivy-iac.txt"
+                '''
+            }
+        }
 
         // ============================================================
-        // 8. PUBLISH / ARCHIVE ARTIFACT
+        // 11. PUBLISH / ARCHIVE ARTIFACT
         // ============================================================
 
         stage('PUBLISH/ARCHIVE ARTIFACT') {
             steps {
-
-                archiveArtifacts(
-                    artifacts: 'target/*.jar',
-                    fingerprint: true
-                )
-
-                echo "Artifact archived successfully."
+                archiveArtifacts(artifacts: 'target/*.jar', fingerprint: true)
             }
         }
 
-
         // ============================================================
-        // 9. BUILD DOCKER IMAGE
+        // 12. BUILD DOCKER IMAGE
         // ============================================================
 
         stage('BUILD DOCKER IMAGE') {
             steps {
-
                 sh '''
                     set -e
-
-                    echo "======================================"
-                    echo "         BUILD DOCKER IMAGE"
-                    echo "======================================"
-
-                    echo "Docker image:"
-                    echo "${DOCKER_IMAGE}"
-
-                    docker build \
-                        -t "${DOCKER_IMAGE}" \
-                        .
-
-                    echo ""
-                    echo "Docker image built successfully."
-
-                    echo ""
-                    echo "Docker image information:"
-
+                    docker build -t "${DOCKER_IMAGE}" .
                     docker images "${DOCKER_REPOSITORY}" --format \
                         "table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}"
                 '''
             }
         }
 
-
         // ============================================================
-        // 10. TRIVY IMAGE SECURITY SCAN
+        // 13. TRIVY IMAGE SECURITY SCAN (+ SBOM)
         // ============================================================
 
         stage('TRIVY IMAGE SECURITY SCAN') {
             steps {
-
                 sh '''
                     set -e
 
-                    echo "======================================"
-                    echo "       TRIVY IMAGE SECURITY SCAN"
-                    echo "======================================"
-
-                    echo "Scanning image:"
-                    echo "${DOCKER_IMAGE}"
-
+                    # SBOM CycloneDX (traçabilité)
                     trivy image \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 1 \
+                        --timeout "${TRIVY_TIMEOUT}" \
+                        --format cyclonedx \
+                        --output "${REPORTS_DIR}/sbom-cyclonedx.json" \
                         "${DOCKER_IMAGE}"
 
-                    echo ""
-                    echo "Trivy security scan completed successfully."
+                    # Security gate : bloque sur HIGH/CRITICAL corrigeables
+                    trivy image \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        --timeout "${TRIVY_TIMEOUT}" \
+                        --exit-code 1 \
+                        --format table \
+                        --output "${REPORTS_DIR}/trivy-image.txt" \
+                        "${DOCKER_IMAGE}" \
+                    || { cat "${REPORTS_DIR}/trivy-image.txt"; exit 1; }
+
+                    cat "${REPORTS_DIR}/trivy-image.txt"
                 '''
             }
         }
 
-
         // ============================================================
-        // 11. PUSH TO DOCKERHUB
+        // 14. PUSH TO DOCKERHUB
         // ============================================================
 
         stage('PUSH TO DOCKERHUB') {
             steps {
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
                     sh '''
                         set -e
-
-                        echo "======================================"
-                        echo "         PUSH TO DOCKERHUB"
-                        echo "======================================"
-
-                        echo "Docker repository:"
-                        echo "${DOCKER_REPOSITORY}"
-
-                        echo ""
-                        echo "Logging in to DockerHub..."
-
-                        echo "${DOCKER_PASSWORD}" | \
-                            docker login \
-                            -u "${DOCKER_USERNAME}" \
-                            --password-stdin
-
-                        echo ""
-                        echo "Pushing image:"
-                        echo "${DOCKER_IMAGE}"
-
+                        echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
                         docker push "${DOCKER_IMAGE}"
-
-                        echo ""
-                        echo "Docker image pushed successfully."
-
-                        echo ""
-                        echo "Logging out from DockerHub..."
-
                         docker logout
                     '''
                 }
             }
         }
 
-
         // ============================================================
-        // 12. DEPLOY
+        // 15. DEPLOY (Kubernetes / minikube)
         // ============================================================
 
         stage('DEPLOY') {
+            environment {
+                KUBECONFIG = credentials('kubeconfig-minikube')   // credential "Secret file"
+            }
             steps {
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'timesheet-db',
-                        usernameVariable: 'DB_USERNAME',
-                        passwordVariable: 'DB_PASSWORD'
-                    )
-                ]) {
-
+                withCredentials([usernamePassword(
+                    credentialsId: 'timesheet-db',
+                    usernameVariable: 'DB_USERNAME',
+                    passwordVariable: 'DB_PASSWORD'
+                )]) {
                     sh '''
                         set -e
 
-                        echo "======================================"
-                        echo "            DEPLOY"
-                        echo "======================================"
+                        kubectl get nodes
 
-                        echo "Kubernetes namespace:"
-                        echo "${K8S_NAMESPACE}"
-
-                        echo ""
-                        echo "Creating namespace if necessary..."
-
-                        kubectl apply \
-                            -f k8s/namespace.yaml
-
-                        echo ""
-                        echo "Creating/updating MySQL Secret..."
+                        kubectl apply -f k8s/namespace.yaml
 
                         kubectl create secret generic mysql-secret \
                             -n "${K8S_NAMESPACE}" \
                             --from-literal=MYSQL_USER="${DB_USERNAME}" \
                             --from-literal=MYSQL_PASSWORD="${DB_PASSWORD}" \
-                            --dry-run=client \
-                            -o yaml | kubectl apply -f -
-
-                        echo ""
-                        echo "Deploying MySQL..."
+                            --dry-run=client -o yaml | kubectl apply -f -
 
                         kubectl apply \
                             -f k8s/mysql-pvc.yaml \
                             -f k8s/mysql-deployment.yaml \
                             -f k8s/mysql-service.yaml
 
-                        echo ""
-                        echo "Deploying Timesheet application..."
-
                         kubectl apply \
                             -f k8s/timesheet-deployment.yaml \
                             -f k8s/timesheet-service.yaml
-
-                        echo ""
-                        echo "Deploying Prometheus..."
 
                         kubectl apply \
                             -f k8s/prometheus-configmap.yaml \
                             -f k8s/prometheus-deployment.yaml \
                             -f k8s/prometheus-service.yaml
 
-                        echo ""
-                        echo "Deploying Grafana if manifests exist..."
-
-                        if [ -f k8s/grafana-deployment.yaml ] && \
-                           [ -f k8s/grafana-service.yaml ]; then
-
-                            kubectl apply \
-                                -f k8s/grafana-deployment.yaml \
-                                -f k8s/grafana-service.yaml
+                        if [ -f k8s/grafana-deployment.yaml ] && [ -f k8s/grafana-service.yaml ]; then
+                            kubectl apply -f k8s/grafana-deployment.yaml -f k8s/grafana-service.yaml
                         else
                             echo "Grafana manifests not found. Skipping."
                         fi
 
-                        echo ""
-                        echo "Updating Timesheet image..."
-
-                        kubectl set image \
-                            deployment/timesheet \
+                        kubectl set image deployment/timesheet \
                             timesheet="${DOCKER_IMAGE}" \
                             -n "${K8S_NAMESPACE}"
 
-                        echo ""
-                        echo "Waiting for Timesheet deployment..."
-
-                        kubectl rollout status \
-                            deployment/timesheet \
-                            -n "${K8S_NAMESPACE}" \
-                            --timeout=180s
-
-                        echo ""
-                        echo "Deployment completed successfully."
+                        kubectl rollout status deployment/timesheet \
+                            -n "${K8S_NAMESPACE}" --timeout=300s
                     '''
                 }
             }
         }
 
-
         // ============================================================
-        // 13. HEALTH CHECK
+        // 16. HEALTH CHECK (via kubectl port-forward)
         // ============================================================
 
         stage('HEALTH CHECK') {
+            environment {
+                KUBECONFIG = credentials('kubeconfig-minikube')
+            }
             steps {
-
                 sh '''
                     set -e
+                    PF_APP=""
+                    PF_PROM=""
+                    trap 'kill $PF_APP $PF_PROM 2>/dev/null || true' EXIT
 
-                    echo "======================================"
-                    echo "           HEALTH CHECK"
-                    echo "======================================"
+                    kubectl get pods -n "${K8S_NAMESPACE}" -o wide
 
+                    for d in mysqldb timesheet prometheus; do
+                        kubectl rollout status "deployment/$d" -n "${K8S_NAMESPACE}" --timeout=180s
+                    done
+
+                    kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
+                        -n "${K8S_NAMESPACE}" > pf-app.log 2>&1 &
+                    PF_APP=$!
+
+                    kubectl port-forward "svc/${PROM_SERVICE}" "${LOCAL_PROM_PORT}:9090" \
+                        -n "${K8S_NAMESPACE}" > pf-prom.log 2>&1 &
+                    PF_PROM=$!
+
+                    HEALTH_URL="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}/actuator/health"
+
+                    echo "Waiting for ${HEALTH_URL} ..."
+                    for i in $(seq 1 30); do
+                        if curl -fsS "${HEALTH_URL}" | grep -q '"status":"UP"'; then
+                            echo "Timesheet application is UP."
+                            break
+                        fi
+                        if [ "$i" -eq 30 ]; then
+                            echo "Application health check FAILED"
+                            cat pf-app.log
+                            exit 1
+                        fi
+                        sleep 5
+                    done
+
+                    curl -fsS "http://localhost:${LOCAL_PROM_PORT}/-/healthy"
                     echo ""
-                    echo "=== Kubernetes Pods ==="
-
-                    kubectl get pods \
-                        -n "${K8S_NAMESPACE}" \
-                        -o wide
-
-                    echo ""
-                    echo "=== MySQL Rollout ==="
-
-                    kubectl rollout status \
-                        deployment/mysqldb \
-                        -n "${K8S_NAMESPACE}" \
-                        --timeout=180s
-
-                    echo ""
-                    echo "=== Timesheet Rollout ==="
-
-                    kubectl rollout status \
-                        deployment/timesheet \
-                        -n "${K8S_NAMESPACE}" \
-                        --timeout=180s
-
-                    echo ""
-                    echo "=== Prometheus Rollout ==="
-
-                    kubectl rollout status \
-                        deployment/prometheus \
-                        -n "${K8S_NAMESPACE}" \
-                        --timeout=180s
-
-                    echo ""
-                    echo "=== Timesheet Application Health ==="
-
-                    wget -qO- \
-                        "http://localhost:${APP_PORT}${APP_CONTEXT_PATH}/actuator/health"
-
-                    echo ""
-
-                    echo "Checking application status..."
-
-                    wget -qO- \
-                        "http://localhost:${APP_PORT}${APP_CONTEXT_PATH}/actuator/health" \
-                        | grep '"status":"UP"'
-
-                    echo ""
-                    echo "Timesheet application is healthy."
-
-                    echo ""
-                    echo "=== Prometheus Health ==="
-
-                    wget -qO- \
-                        "http://localhost:9090/-/healthy"
-
-                    echo ""
-                    echo "Prometheus is healthy."
-
-                    echo ""
-                    echo "======================================"
-                    echo "        HEALTH CHECK PASSED"
-                    echo "======================================"
+                    echo "Prometheus (k8s) is healthy."
                 '''
+            }
+        }
+
+        // ============================================================
+        // 17. DAST - OWASP ZAP BASELINE (non bloquant)
+        // ============================================================
+
+        stage('DAST - OWASP ZAP') {
+            environment {
+                KUBECONFIG = credentials('kubeconfig-minikube')
+            }
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh '''
+                        set -e
+                        PF_APP=""
+                        trap 'kill $PF_APP 2>/dev/null || true' EXIT
+
+                        kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
+                            -n "${K8S_NAMESPACE}" > pf-zap.log 2>&1 &
+                        PF_APP=$!
+                        sleep 5
+
+                        docker run --rm --network host \
+                            -v "$(pwd)/${REPORTS_DIR}:/zap/wrk:rw" \
+                            ghcr.io/zaproxy/zaproxy:stable \
+                            zap-baseline.py \
+                                -t "http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}/" \
+                                -r zap-report.html \
+                                -I
+                    '''
+                }
             }
         }
     }
 
-
     // ================================================================
-    // POST ACTIONS
+    // POST ACTIONS  (triple guillemets doubles => variables interpolées)
     // ================================================================
 
     post {
 
-        success {
-
-            echo '''
-======================================
-          PIPELINE SUCCESS
-======================================
-
-Job: timesheet-project
-Build: #${BUILD_NUMBER}
-Result: SUCCESS
-
-Docker Image:
-${DOCKER_IMAGE}
-
-Kubernetes Namespace:
-${K8S_NAMESPACE}
-
-All pipeline stages completed successfully.
-'''
-        }
-
-
-        failure {
-
-            echo '''
-======================================
-          PIPELINE FAILURE
-======================================
-
-Job: timesheet-project
-Build: #${BUILD_NUMBER}
-Result: FAILURE
-
-Docker Image:
-${DOCKER_IMAGE}
-
-Kubernetes Namespace:
-${K8S_NAMESPACE}
-
-Please check the Jenkins console output
-to identify the failed stage.
-'''
-        }
-
-
         always {
-
-            echo '''
+            archiveArtifacts(artifacts: 'reports/**', allowEmptyArchive: true)
+            sh 'docker logout || true'
+            echo """
 ======================================
           PIPELINE SUMMARY
 ======================================
-
-Job:
-${JOB_NAME}
-
-Build:
-#${BUILD_NUMBER}
-
-Result:
-${currentBuild.currentResult}
-
-Docker Image:
-${DOCKER_IMAGE}
-
-Kubernetes Namespace:
-${K8S_NAMESPACE}
-
-Build URL:
-${BUILD_URL}
+Job       : ${env.JOB_NAME}
+Build     : #${env.BUILD_NUMBER}
+Result    : ${currentBuild.currentResult}
+Image     : ${env.DOCKER_IMAGE}
+Namespace : ${env.K8S_NAMESPACE}
+Build URL : ${env.BUILD_URL}
 ======================================
-'''
+"""
+        }
+
+        success {
+            echo "PIPELINE SUCCESS - ${env.DOCKER_IMAGE} déployée dans ${env.K8S_NAMESPACE}"
+        }
+
+        unstable {
+            echo "PIPELINE UNSTABLE - voir le rapport ZAP dans les artefacts (reports/zap-report.html)"
+        }
+
+        failure {
+            echo "PIPELINE FAILURE - consulter la console et les rapports dans reports/"
         }
     }
 }

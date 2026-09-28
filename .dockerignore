@@ -1,0 +1,3 @@
+# On n'envoie au build Docker que le JAR
+*
+!target/timesheet-devops-1.0.jar

@@ -1,0 +1,10 @@
+# ============================================================
+# Exceptions Trivy (acceptation de risque temporaire)
+# Revue : 2026-09-28 - à supprimer dès que le correctif est publié
+# ============================================================
+
+# Tomcat : correctif 10.1.58 pas encore publié sur Maven Central
+# Non exploitable ici : pas d'authentification DIGEST/FORM ni de security constraints Tomcat
+CVE-2026-65182 exp:2026-11-30
+CVE-2026-65905 exp:2026-11-30
+CVE-2026-68525 exp:2026-11-30
