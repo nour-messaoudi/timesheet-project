@@ -301,10 +301,6 @@ pipeline {
         // ============================================================
 
         stage('DEPLOY') {
-            environment {
-                KUBECONFIG = credentials('kubeconfig-minikube')   // credential "Secret file"
-            }
-            steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'timesheet-db',
                     usernameVariable: 'DB_USERNAME',
@@ -359,10 +355,6 @@ pipeline {
         // ============================================================
 
         stage('HEALTH CHECK') {
-            environment {
-                KUBECONFIG = credentials('kubeconfig-minikube')
-            }
-            steps {
                 sh '''
                     set -e
                     PF_APP=""
@@ -411,10 +403,6 @@ pipeline {
         // ============================================================
 
         stage('DAST - OWASP ZAP') {
-            environment {
-                KUBECONFIG = credentials('kubeconfig-minikube')
-            }
-            steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     sh '''
                         set -e
