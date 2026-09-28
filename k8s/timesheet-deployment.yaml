@@ -18,8 +18,8 @@ spec:
     spec:
       containers:
         - name: timesheet
-          image: timesheet-project_timesheet:latest
-          imagePullPolicy: Never
+          image: nouuur/timesheet:latest
+          imagePullPolicy: IfNotPresent
 
           ports:
             - containerPort: 8082
