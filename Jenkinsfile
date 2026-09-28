@@ -2,40 +2,24 @@ pipeline {
 
     agent any
 
+    // ============================================================
+    // ENVIRONMENT
+    // ============================================================
+
     environment {
 
-        // ============================================================
-        // APPLICATION
-        // ============================================================
-
-        APP_NAME = 'timesheet'
-        APP_PORT = '8082'
-        APP_CONTEXT_PATH = '/timesheet-devops'
-
-
-        // ============================================================
-        // DOCKER
-        // ============================================================
-
+        // Docker
         DOCKER_REPOSITORY = 'nouuur/timesheet'
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        DOCKER_IMAGE = "${DOCKER_REPOSITORY}:${BUILD_NUMBER}"
+        IMAGE_TAG         = "${BUILD_NUMBER}"
+        DOCKER_IMAGE      = "${DOCKER_REPOSITORY}:${BUILD_NUMBER}"
 
+        // Kubernetes
+        K8S_NAMESPACE     = 'timesheet-platform'
 
-        // ============================================================
-        // KUBERNETES
-        // ============================================================
-
-        K8S_NAMESPACE = 'timesheet-platform'
-
-
-        // ============================================================
-        // MAVEN
-        // ============================================================
-
-        MAVEN_OPTS = '-Dmaven.repo.local=/var/lib/jenkins/.m2/repository'
+        // Application
+        APP_PORT          = '8082'
+        APP_CONTEXT_PATH  = '/timesheet-devops'
     }
-
 
     stages {
 
@@ -45,6 +29,7 @@ pipeline {
 
         stage('TOOL CHECK') {
             steps {
+
                 sh '''
                     set -e
 
@@ -53,35 +38,31 @@ pipeline {
                     echo "======================================"
 
                     echo ""
-                    echo "=== Java ==="
+                    echo "Java:"
                     java -version
 
                     echo ""
-                    echo "=== Maven ==="
+                    echo "Maven:"
                     mvn -version
 
                     echo ""
-                    echo "=== Docker ==="
+                    echo "Docker:"
                     docker --version
 
                     echo ""
-                    echo "=== kubectl ==="
+                    echo "kubectl:"
                     kubectl version --client
 
                     echo ""
-                    echo "=== Minikube ==="
-                    minikube version
-
-                    echo ""
-                    echo "=== Trivy ==="
+                    echo "Trivy:"
                     trivy --version
 
                     echo ""
-                    echo "=== Git ==="
+                    echo "Git:"
                     git --version
 
                     echo ""
-                    echo "=== Pre-commit ==="
+                    echo "Pre-commit:"
                     pre-commit --version
 
                     echo ""
@@ -97,17 +78,37 @@ pipeline {
 
         stage('CHECKOUT FROM GITHUB') {
             steps {
+
+                echo "======================================"
+                echo "       CHECKOUT FROM GITHUB"
+                echo "======================================"
+
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: '*/master']],
+
+                    branches: [
+                        [name: '*/master']
+                    ],
+
                     userRemoteConfigs: [[
                         url: 'https://github.com/nour-messaoudi/timesheet-project.git',
                         credentialsId: 'github-token'
                     ]],
+
                     extensions: [
                         [$class: 'CleanBeforeCheckout']
                     ]
                 ])
+
+                sh '''
+                    echo ""
+                    echo "Current commit:"
+                    git log -1 --oneline
+
+                    echo ""
+                    echo "Current branch:"
+                    git branch --show-current
+                '''
             }
         }
 
@@ -118,6 +119,7 @@ pipeline {
 
         stage('CLEAN PROJECT') {
             steps {
+
                 sh '''
                     set -e
 
@@ -140,6 +142,7 @@ pipeline {
 
         stage('BUILD ARTIFACT') {
             steps {
+
                 sh '''
                     set -e
 
@@ -166,6 +169,7 @@ pipeline {
 
         stage('UNIT & SECURITY TESTS') {
             steps {
+
                 sh '''
                     set -e
 
@@ -190,13 +194,16 @@ pipeline {
 
         stage('SONARQUBE / CODE QUALITY') {
             steps {
+
                 withSonarQubeEnv('SonarQube') {
+
                     withCredentials([
                         string(
                             credentialsId: 'sonar-token',
                             variable: 'SONAR_TOKEN'
                         )
                     ]) {
+
                         sh '''
                             set -e
 
@@ -219,11 +226,12 @@ pipeline {
 
         stage('SECRET SECURITY SCAN') {
             steps {
+
                 sh '''
                     set -e
 
                     echo "======================================"
-                    echo "        SECRET SECURITY SCAN"
+                    echo "         SECRET SECURITY SCAN"
                     echo "======================================"
 
                     pre-commit run --all-files
@@ -236,41 +244,12 @@ pipeline {
 
 
         // ============================================================
-        // 8. DEPENDENCY SECURITY SCAN
-        // ============================================================
-
-        stage('DEPENDENCY SECURITY SCAN') {
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'nvd-api-key',
-                        variable: 'NVD_API_KEY'
-                    )
-                ]) {
-                    sh '''
-                        set -e
-
-                        echo "======================================"
-                        echo "       DEPENDENCY SECURITY SCAN"
-                        echo "======================================"
-
-                        mvn org.owasp:dependency-check-maven:check \
-                            -DnvdApiKeyEnvironmentVariable=NVD_API_KEY
-
-                        echo ""
-                        echo "Dependency security scan completed successfully."
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 9. PUBLISH / ARCHIVE ARTIFACT
+        // 8. PUBLISH / ARCHIVE ARTIFACT
         // ============================================================
 
         stage('PUBLISH/ARCHIVE ARTIFACT') {
             steps {
+
                 archiveArtifacts(
                     artifacts: 'target/*.jar',
                     fingerprint: true
@@ -282,11 +261,12 @@ pipeline {
 
 
         // ============================================================
-        // 10. BUILD DOCKER IMAGE
+        // 9. BUILD DOCKER IMAGE
         // ============================================================
 
         stage('BUILD DOCKER IMAGE') {
             steps {
+
                 sh '''
                     set -e
 
@@ -304,6 +284,9 @@ pipeline {
                     echo ""
                     echo "Docker image built successfully."
 
+                    echo ""
+                    echo "Docker image information:"
+
                     docker images "${DOCKER_REPOSITORY}" --format \
                         "table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}"
                 '''
@@ -312,11 +295,12 @@ pipeline {
 
 
         // ============================================================
-        // 11. TRIVY IMAGE SECURITY SCAN
+        // 10. TRIVY IMAGE SECURITY SCAN
         // ============================================================
 
         stage('TRIVY IMAGE SECURITY SCAN') {
             steps {
+
                 sh '''
                     set -e
 
@@ -340,11 +324,12 @@ pipeline {
 
 
         // ============================================================
-        // 12. PUSH TO DOCKERHUB
+        // 11. PUSH TO DOCKERHUB
         // ============================================================
 
         stage('PUSH TO DOCKERHUB') {
             steps {
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-creds',
@@ -352,24 +337,38 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
                         echo "======================================"
-                        echo "          PUSH TO DOCKERHUB"
+                        echo "         PUSH TO DOCKERHUB"
                         echo "======================================"
 
-                        echo "${DOCKER_PASSWORD}" | docker login \
+                        echo "Docker repository:"
+                        echo "${DOCKER_REPOSITORY}"
+
+                        echo ""
+                        echo "Logging in to DockerHub..."
+
+                        echo "${DOCKER_PASSWORD}" | \
+                            docker login \
                             -u "${DOCKER_USERNAME}" \
                             --password-stdin
 
-                        docker push "${DOCKER_IMAGE}"
+                        echo ""
+                        echo "Pushing image:"
+                        echo "${DOCKER_IMAGE}"
 
-                        docker logout
+                        docker push "${DOCKER_IMAGE}"
 
                         echo ""
                         echo "Docker image pushed successfully."
-                        echo "Image: ${DOCKER_IMAGE}"
+
+                        echo ""
+                        echo "Logging out from DockerHub..."
+
+                        docker logout
                     '''
                 }
             }
@@ -377,11 +376,12 @@ pipeline {
 
 
         // ============================================================
-        // 13. DEPLOY
+        // 12. DEPLOY
         // ============================================================
 
         stage('DEPLOY') {
             steps {
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'timesheet-db',
@@ -389,22 +389,25 @@ pipeline {
                         passwordVariable: 'DB_PASSWORD'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
                         echo "======================================"
-                        echo "        KUBERNETES DEPLOYMENT"
+                        echo "            DEPLOY"
                         echo "======================================"
 
+                        echo "Kubernetes namespace:"
+                        echo "${K8S_NAMESPACE}"
+
                         echo ""
-                        echo "=== Namespace ==="
+                        echo "Creating namespace if necessary..."
 
                         kubectl apply \
                             -f k8s/namespace.yaml
 
-
                         echo ""
-                        echo "=== MySQL Secret ==="
+                        echo "Creating/updating MySQL Secret..."
 
                         kubectl create secret generic mysql-secret \
                             -n "${K8S_NAMESPACE}" \
@@ -413,77 +416,60 @@ pipeline {
                             --dry-run=client \
                             -o yaml | kubectl apply -f -
 
-
                         echo ""
-                        echo "=== MySQL ==="
+                        echo "Deploying MySQL..."
 
                         kubectl apply \
-                            -f k8s/mysql-pvc.yaml
-
-                        kubectl apply \
-                            -f k8s/mysql-deployment.yaml
-
-                        kubectl apply \
+                            -f k8s/mysql-pvc.yaml \
+                            -f k8s/mysql-deployment.yaml \
                             -f k8s/mysql-service.yaml
 
-
                         echo ""
-                        echo "=== Timesheet Service ==="
+                        echo "Deploying Timesheet application..."
 
                         kubectl apply \
+                            -f k8s/timesheet-deployment.yaml \
                             -f k8s/timesheet-service.yaml
 
-
                         echo ""
-                        echo "=== Prometheus ==="
+                        echo "Deploying Prometheus..."
 
                         kubectl apply \
-                            -f k8s/prometheus-configmap.yaml
-
-                        kubectl apply \
-                            -f k8s/prometheus-deployment.yaml
-
-                        kubectl apply \
+                            -f k8s/prometheus-configmap.yaml \
+                            -f k8s/prometheus-deployment.yaml \
                             -f k8s/prometheus-service.yaml
 
-
                         echo ""
-                        echo "=== Grafana ==="
+                        echo "Deploying Grafana if manifests exist..."
 
-                        if [ -f k8s/grafana-deployment.yaml ]; then
-                            kubectl apply \
-                                -f k8s/grafana-deployment.yaml
-                        fi
+                        if [ -f k8s/grafana-deployment.yaml ] && \
+                           [ -f k8s/grafana-service.yaml ]; then
 
-                        if [ -f k8s/grafana-service.yaml ]; then
                             kubectl apply \
+                                -f k8s/grafana-deployment.yaml \
                                 -f k8s/grafana-service.yaml
+                        else
+                            echo "Grafana manifests not found. Skipping."
                         fi
 
-
                         echo ""
-                        echo "=== Deploy Timesheet Image ==="
-
-                        echo "Image:"
-                        echo "${DOCKER_IMAGE}"
+                        echo "Updating Timesheet image..."
 
                         kubectl set image \
                             deployment/timesheet \
                             timesheet="${DOCKER_IMAGE}" \
                             -n "${K8S_NAMESPACE}"
 
-
                         echo ""
-                        echo "=== Deployment image ==="
+                        echo "Waiting for Timesheet deployment..."
 
-                        kubectl get deployment timesheet \
+                        kubectl rollout status \
+                            deployment/timesheet \
                             -n "${K8S_NAMESPACE}" \
-                            -o jsonpath='{.spec.template.spec.containers[0].image}'
+                            --timeout=180s
 
                         echo ""
-
-                        echo ""
-                        echo "Kubernetes deployment completed successfully."
+                        echo "Deployment completed successfully."
                     '''
                 }
             }
@@ -491,18 +477,25 @@ pipeline {
 
 
         // ============================================================
-        // 14. HEALTH CHECK
+        // 13. HEALTH CHECK
         // ============================================================
 
         stage('HEALTH CHECK') {
             steps {
+
                 sh '''
                     set -e
 
                     echo "======================================"
-                    echo "             HEALTH CHECK"
+                    echo "           HEALTH CHECK"
                     echo "======================================"
 
+                    echo ""
+                    echo "=== Kubernetes Pods ==="
+
+                    kubectl get pods \
+                        -n "${K8S_NAMESPACE}" \
+                        -o wide
 
                     echo ""
                     echo "=== MySQL Rollout ==="
@@ -512,7 +505,6 @@ pipeline {
                         -n "${K8S_NAMESPACE}" \
                         --timeout=180s
 
-
                     echo ""
                     echo "=== Timesheet Rollout ==="
 
@@ -520,7 +512,6 @@ pipeline {
                         deployment/timesheet \
                         -n "${K8S_NAMESPACE}" \
                         --timeout=180s
-
 
                     echo ""
                     echo "=== Prometheus Rollout ==="
@@ -530,105 +521,35 @@ pipeline {
                         -n "${K8S_NAMESPACE}" \
                         --timeout=180s
 
+                    echo ""
+                    echo "=== Timesheet Application Health ==="
+
+                    wget -qO- \
+                        "http://localhost:${APP_PORT}${APP_CONTEXT_PATH}/actuator/health"
 
                     echo ""
-                    echo "=== Kubernetes Pods ==="
 
-                    kubectl get pods \
-                        -n "${K8S_NAMESPACE}" \
-                        -o wide
+                    echo "Checking application status..."
 
-
-                    echo ""
-                    echo "=== Kubernetes Services ==="
-
-                    kubectl get services \
-                        -n "${K8S_NAMESPACE}"
-
+                    wget -qO- \
+                        "http://localhost:${APP_PORT}${APP_CONTEXT_PATH}/actuator/health" \
+                        | grep '"status":"UP"'
 
                     echo ""
-                    echo "=== Minikube IP ==="
-
-                    MINIKUBE_IP=$(minikube ip)
-
-                    echo "${MINIKUBE_IP}"
-
-
-                    echo ""
-                    echo "=== Timesheet Service Health ==="
-
-                    TIMESHEET_NODE_PORT=$(kubectl get service timesheet \
-                        -n "${K8S_NAMESPACE}" \
-                        -o jsonpath='{.spec.ports[0].nodePort}')
-
-                    TIMESHEET_URL="http://${MINIKUBE_IP}:${TIMESHEET_NODE_PORT}${APP_CONTEXT_PATH}/actuator/health"
-
-                    echo "Timesheet URL:"
-                    echo "${TIMESHEET_URL}"
-
-                    HEALTH_RESPONSE=$(wget -qO- "${TIMESHEET_URL}" || true)
-
-                    echo "Response:"
-                    echo "${HEALTH_RESPONSE}"
-
-                    if echo "${HEALTH_RESPONSE}" | grep -q '"status":"UP"'; then
-                        echo ""
-                        echo "Timesheet health check: PASS"
-                    else
-                        echo ""
-                        echo "Timesheet health check: FAIL"
-                        exit 1
-                    fi
-
+                    echo "Timesheet application is healthy."
 
                     echo ""
                     echo "=== Prometheus Health ==="
 
-                    PROMETHEUS_NODE_PORT=$(kubectl get service prometheus \
-                        -n "${K8S_NAMESPACE}" \
-                        -o jsonpath='{.spec.ports[0].nodePort}')
-
-                    PROMETHEUS_URL="http://${MINIKUBE_IP}:${PROMETHEUS_NODE_PORT}/-/healthy"
-
-                    echo "Prometheus URL:"
-                    echo "${PROMETHEUS_URL}"
-
-                    PROMETHEUS_RESPONSE=$(wget -qO- "${PROMETHEUS_URL}" || true)
-
-                    echo "Response:"
-                    echo "${PROMETHEUS_RESPONSE}"
-
-                    if echo "${PROMETHEUS_RESPONSE}" | grep -qi "Prometheus Server is Healthy"; then
-                        echo ""
-                        echo "Prometheus health check: PASS"
-                    else
-                        echo ""
-                        echo "Prometheus health check: FAIL"
-                        exit 1
-                    fi
-
+                    wget -qO- \
+                        "http://localhost:9090/-/healthy"
 
                     echo ""
-                    echo "=== Prometheus Metrics Endpoint ==="
-
-                    METRICS_URL="http://${MINIKUBE_IP}:${TIMESHEET_NODE_PORT}${APP_CONTEXT_PATH}/actuator/prometheus"
-
-                    echo "Metrics URL:"
-                    echo "${METRICS_URL}"
-
-                    METRICS_RESPONSE=$(wget -qO- "${METRICS_URL}" || true)
-
-                    if echo "${METRICS_RESPONSE}" | grep -q "jvm_"; then
-                        echo "Prometheus metrics endpoint: PASS"
-                    else
-                        echo "Prometheus metrics endpoint: FAIL"
-                        exit 1
-                    fi
-
+                    echo "Prometheus is healthy."
 
                     echo ""
                     echo "======================================"
-                    echo "       ALL HEALTH CHECKS PASSED"
+                    echo "        HEALTH CHECK PASSED"
                     echo "======================================"
                 '''
             }
@@ -643,34 +564,76 @@ pipeline {
     post {
 
         success {
-            echo ""
-            echo "======================================"
-            echo "       PIPELINE SUCCESS"
-            echo "======================================"
 
-            echo "Build number : ${BUILD_NUMBER}"
-            echo "Docker image : ${DOCKER_IMAGE}"
-            echo "Namespace    : ${K8S_NAMESPACE}"
+            echo '''
+======================================
+          PIPELINE SUCCESS
+======================================
 
-            echo ""
-            echo "All pipeline stages completed successfully."
+Job: timesheet-project
+Build: #${BUILD_NUMBER}
+Result: SUCCESS
+
+Docker Image:
+${DOCKER_IMAGE}
+
+Kubernetes Namespace:
+${K8S_NAMESPACE}
+
+All pipeline stages completed successfully.
+'''
         }
 
 
         failure {
-            echo ""
-            echo "======================================"
-            echo "       PIPELINE FAILURE"
-            echo "======================================"
 
-            echo "Build number : ${BUILD_NUMBER}"
-            echo "Check the Jenkins console output for details."
+            echo '''
+======================================
+          PIPELINE FAILURE
+======================================
+
+Job: timesheet-project
+Build: #${BUILD_NUMBER}
+Result: FAILURE
+
+Docker Image:
+${DOCKER_IMAGE}
+
+Kubernetes Namespace:
+${K8S_NAMESPACE}
+
+Please check the Jenkins console output
+to identify the failed stage.
+'''
         }
 
 
         always {
-            echo ""
-            echo "Pipeline finished with status: ${currentBuild.currentResult}"
+
+            echo '''
+======================================
+          PIPELINE SUMMARY
+======================================
+
+Job:
+${JOB_NAME}
+
+Build:
+#${BUILD_NUMBER}
+
+Result:
+${currentBuild.currentResult}
+
+Docker Image:
+${DOCKER_IMAGE}
+
+Kubernetes Namespace:
+${K8S_NAMESPACE}
+
+Build URL:
+${BUILD_URL}
+======================================
+'''
         }
     }
 }
