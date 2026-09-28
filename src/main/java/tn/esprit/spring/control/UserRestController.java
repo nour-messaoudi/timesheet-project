@@ -1,7 +1,6 @@
 package tn.esprit.spring.control;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,7 +31,7 @@ public class UserRestController {
         return userService.retrieveAllUsers()
                 .stream()
                 .map(this::convertToDTO)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @GetMapping("/retrieve-user/{user-id}")
