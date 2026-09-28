@@ -301,6 +301,7 @@ pipeline {
         // ============================================================
 
         stage('DEPLOY') {
+            steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'timesheet-db',
                     usernameVariable: 'DB_USERNAME',
@@ -355,6 +356,7 @@ pipeline {
         // ============================================================
 
         stage('HEALTH CHECK') {
+            steps {
                 sh '''
                     set -e
                     PF_APP=""
@@ -403,6 +405,7 @@ pipeline {
         // ============================================================
 
         stage('DAST - OWASP ZAP') {
+            steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     sh '''
                         set -e
@@ -463,3 +466,4 @@ Build URL : ${env.BUILD_URL}
         }
     }
 }
+
