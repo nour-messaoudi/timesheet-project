@@ -33,7 +33,7 @@
         <!-- Tomcat embarqué (CVE-2025-24813, CVE-2026-65182, ...) -->
         <tomcat.version>10.1.55</tomcat.version>
         <!-- Jackson (CVE-2026-54512, CVE-2026-54513, CVE-2025-52999) -->
-        <jackson-bom.version>2.21.4</jackson-bom.version>
+        <jackson-bom.version>2.21.7</jackson-bom.version>
         <!-- Spring Framework (CVE-2026-41842, CVE-2026-41845, CVE-2026-41850) -->
         <spring-framework.version>6.2.19</spring-framework.version>
         <!-- Micrometer (CVE-2026-40984) -->
