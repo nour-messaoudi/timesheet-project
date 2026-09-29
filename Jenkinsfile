@@ -1,13 +1,13 @@
 import groovy.transform.Field
-
+ 
 // ====================================================================
 // SUIVI DES STAGES (alimente le rapport DevSecOps)
 // ====================================================================
-
+ 
 @Field Map STAGE_STATUS   = [:]
 @Field Map STAGE_DURATION = [:]
 @Field Map STAGE_INFO     = [:]
-
+ 
 // Exécute le corps d'un stage en enregistrant son statut et sa durée
 def runStage(String name, Closure body) {
     long t0 = System.currentTimeMillis()
@@ -22,59 +22,77 @@ def runStage(String name, Closure body) {
         STAGE_DURATION[name] = System.currentTimeMillis() - t0   // en ms
     }
 }
-
+ 
+// Écrit les fichiers d'entrée du rapport (stages.txt + meta.txt)
+def writeReportInputs() {
+    def lines = []
+    for (String k : STAGE_STATUS.keySet()) {
+        lines << "${k}|${STAGE_STATUS[k]}|${STAGE_DURATION[k] ?: 0}"
+    }
+    writeFile file: "${env.REPORTS_DIR}/stages.txt", text: lines.join('\n') + '\n'
+    writeFile file: "${env.REPORTS_DIR}/meta.txt", text: """result=${currentBuild.currentResult}
+qualityGate=${STAGE_INFO['qualityGate'] ?: 'N/A'}
+sonarUrl=${STAGE_INFO['sonarUrl'] ?: ''}
+sonarKey=${env.SONAR_PROJECT_KEY}
+image=${env.DOCKER_IMAGE}
+"""
+}
+ 
 pipeline {
-
+ 
     agent any
-
+ 
     // ============================================================
     // OPTIONS
     // ============================================================
-
+ 
     options {
         skipDefaultCheckout(true)          // évite le double checkout
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 60, unit: 'MINUTES')
     }
-
+ 
     // ============================================================
     // ENVIRONMENT
     // ============================================================
-
+ 
     environment {
-
+ 
         // Docker
         DOCKER_REPOSITORY = 'nouuur/timesheet'
         DOCKER_IMAGE      = "${DOCKER_REPOSITORY}:${BUILD_NUMBER}"
-
+ 
         // Kubernetes
         K8S_NAMESPACE     = 'timesheet-platform'
         APP_SERVICE       = 'timesheet'      // nom du Service k8s de l'app
         PROM_SERVICE      = 'prometheus'     // nom du Service k8s de Prometheus
-
+ 
         // Application
         APP_PORT          = '8082'           // port du Service k8s
         APP_CONTEXT_PATH  = '/timesheet-devops'
-
+ 
         // Ports locaux utilisés par kubectl port-forward
         LOCAL_APP_PORT    = '18082'
         LOCAL_PROM_PORT   = '19090'
-
+ 
         // SonarQube
         SONAR_PROJECT_KEY = 'tn.esprit.spring.services:timesheet-devops'
-
+ 
+        // Notification e-mail (à remplacer par votre adresse)
+        NOTIFY_EMAIL      = 'nourmess232@gmail.com'
+ 
         // DevSecOps
         REPORTS_DIR       = 'reports'
         TRIVY_TIMEOUT     = '20m'
     }
-
+ 
     stages {
-
+ 
         // ============================================================
         // 1. TOOL CHECK
         // ============================================================
-
+ 
         stage('TOOL CHECK') {
             steps {
                 script {
@@ -97,11 +115,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 2. CHECKOUT FROM GITHUB
         // ============================================================
-
+ 
         stage('CHECKOUT FROM GITHUB') {
             steps {
                 script {
@@ -115,7 +133,7 @@ pipeline {
                             ]],
                             extensions: [[$class: 'CleanBeforeCheckout']]
                         ])
-
+ 
                         sh '''
                             set -e
                             echo "Commit : $(git log -1 --oneline)"
@@ -126,11 +144,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 3. SECRET SECURITY SCAN  (shift-left : avant le build)
         // ============================================================
-
+ 
         stage('SECRET SECURITY SCAN') {
             steps {
                 script {
@@ -146,11 +164,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 4. CLEAN PROJECT
         // ============================================================
-
+ 
         stage('CLEAN PROJECT') {
             steps {
                 script {
@@ -160,11 +178,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 5. BUILD ARTIFACT
         // ============================================================
-
+ 
         stage('BUILD ARTIFACT') {
             steps {
                 script {
@@ -178,11 +196,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 6. UNIT & SECURITY TESTS  (+ rapport de couverture JaCoCo)
         // ============================================================
-
+ 
         stage('UNIT & SECURITY TESTS') {
             steps {
                 script {
@@ -200,11 +218,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 7. SAST - SONARQUBE
         // ============================================================
-
+ 
         stage('SAST - SONARQUBE') {
             steps {
                 script {
@@ -224,11 +242,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 8. QUALITY GATE  (nécessite le webhook SonarQube -> Jenkins)
         // ============================================================
-
+ 
         stage('QUALITY GATE') {
             steps {
                 script {
@@ -239,7 +257,7 @@ pipeline {
                         }
                         STAGE_INFO['qualityGate'] = qg.status
                         echo "Quality Gate : ${qg.status}"
-
+ 
                         // Mesures SonarQube pour le rapport (non bloquant)
                         withSonarQubeEnv('SonarQube') {
                             withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
@@ -258,7 +276,7 @@ pipeline {
                                 '''
                             }
                         }
-
+ 
                         if (qg.status != 'OK') {
                             error "Quality Gate SonarQube en echec : ${qg.status}"
                         }
@@ -266,11 +284,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 9. SCA - DEPENDENCIES SCAN (Trivy fs sur pom.xml)
         // ============================================================
-
+ 
         stage('SCA - DEPENDENCIES SCAN') {
             steps {
                 script {
@@ -295,11 +313,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 10. IaC SCAN (Dockerfile + manifests k8s)
         // ============================================================
-
+ 
         stage('IaC SECURITY SCAN') {
             steps {
                 script {
@@ -322,11 +340,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 11. PUBLISH / ARCHIVE ARTIFACT
         // ============================================================
-
+ 
         stage('PUBLISH/ARCHIVE ARTIFACT') {
             steps {
                 script {
@@ -336,11 +354,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 12. BUILD DOCKER IMAGE
         // ============================================================
-
+ 
         stage('BUILD DOCKER IMAGE') {
             steps {
                 script {
@@ -355,25 +373,25 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 13. TRIVY IMAGE SECURITY SCAN (+ SBOM) — SECURITY GATE
         // ============================================================
-
+ 
         stage('TRIVY IMAGE SECURITY SCAN') {
             steps {
                 script {
                     runStage(env.STAGE_NAME) {
                         sh '''
                             set -e
-
+ 
                             # SBOM CycloneDX (traçabilité)
                             trivy image \
                                 --timeout "${TRIVY_TIMEOUT}" \
                                 --format cyclonedx \
                                 --output "${REPORTS_DIR}/sbom-cyclonedx.json" \
                                 "${DOCKER_IMAGE}"
-
+ 
                             # Résultats détaillés (JSON) pour le rapport
                             trivy image \
                                 --scanners vuln \
@@ -384,7 +402,7 @@ pipeline {
                                 --format json \
                                 --output "${REPORTS_DIR}/trivy-image.json" \
                                 "${DOCKER_IMAGE}"
-
+ 
                             # Security gate : bloque sur HIGH/CRITICAL corrigeables
                             trivy image \
                                 --scanners vuln \
@@ -396,18 +414,18 @@ pipeline {
                                 --output "${REPORTS_DIR}/trivy-image.txt" \
                                 "${DOCKER_IMAGE}" \
                             || { cat "${REPORTS_DIR}/trivy-image.txt"; exit 1; }
-
+ 
                             cat "${REPORTS_DIR}/trivy-image.txt"
                         '''
                     }
                 }
             }
         }
-
+ 
         // ============================================================
         // 14. PUSH TO DOCKERHUB
         // ============================================================
-
+ 
         stage('PUSH TO DOCKERHUB') {
             steps {
                 script {
@@ -420,7 +438,7 @@ pipeline {
                             sh '''
                                 set -e
                                 echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
-
+ 
                                 # Réseau WSL2 instable : 3 tentatives (les couches déjà envoyées ne sont pas renvoyées)
                                 for i in 1 2 3; do
                                     if docker push "${DOCKER_IMAGE}"; then
@@ -435,7 +453,7 @@ pipeline {
                                     echo "Push interrompu, nouvelle tentative dans 15 s..."
                                     sleep 15
                                 done
-
+ 
                                 docker logout
                             '''
                         }
@@ -443,11 +461,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 15. DEPLOY (Kubernetes / minikube)
         // ============================================================
-
+ 
         stage('DEPLOY') {
             steps {
                 script {
@@ -459,41 +477,41 @@ pipeline {
                         )]) {
                             sh '''
                                 set -e
-
+ 
                                 kubectl get nodes
-
+ 
                                 kubectl apply -f k8s/namespace.yaml
-
+ 
                                 kubectl create secret generic mysql-secret \
                                     -n "${K8S_NAMESPACE}" \
                                     --from-literal=MYSQL_USER="${DB_USERNAME}" \
                                     --from-literal=MYSQL_PASSWORD="${DB_PASSWORD}" \
                                     --dry-run=client -o yaml | kubectl apply -f -
-
+ 
                                 kubectl apply \
                                     -f k8s/mysql-pvc.yaml \
                                     -f k8s/mysql-deployment.yaml \
                                     -f k8s/mysql-service.yaml
-
+ 
                                 kubectl apply \
                                     -f k8s/timesheet-deployment.yaml \
                                     -f k8s/timesheet-service.yaml
-
+ 
                                 kubectl apply \
                                     -f k8s/prometheus-configmap.yaml \
                                     -f k8s/prometheus-deployment.yaml \
                                     -f k8s/prometheus-service.yaml
-
+ 
                                 if [ -f k8s/grafana-deployment.yaml ] && [ -f k8s/grafana-service.yaml ]; then
                                     kubectl apply -f k8s/grafana-deployment.yaml -f k8s/grafana-service.yaml
                                 else
                                     echo "Grafana manifests not found. Skipping."
                                 fi
-
+ 
                                 kubectl set image deployment/timesheet \
                                     timesheet="${DOCKER_IMAGE}" \
                                     -n "${K8S_NAMESPACE}"
-
+ 
                                 if ! kubectl rollout status deployment/timesheet \
                                         -n "${K8S_NAMESPACE}" --timeout=300s; then
                                     echo "=========== ROLLOUT KO : DIAGNOSTIC ==========="
@@ -511,11 +529,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 16. HEALTH CHECK (via kubectl port-forward)
         // ============================================================
-
+ 
         stage('HEALTH CHECK') {
             steps {
                 script {
@@ -525,23 +543,23 @@ pipeline {
                             PF_APP=""
                             PF_PROM=""
                             trap 'kill $PF_APP $PF_PROM 2>/dev/null || true' EXIT
-
+ 
                             kubectl get pods -n "${K8S_NAMESPACE}" -o wide
-
+ 
                             for d in mysqldb timesheet prometheus; do
                                 kubectl rollout status "deployment/$d" -n "${K8S_NAMESPACE}" --timeout=180s
                             done
-
+ 
                             kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
                                 -n "${K8S_NAMESPACE}" > pf-app.log 2>&1 &
                             PF_APP=$!
-
+ 
                             kubectl port-forward "svc/${PROM_SERVICE}" "${LOCAL_PROM_PORT}:9090" \
                                 -n "${K8S_NAMESPACE}" > pf-prom.log 2>&1 &
                             PF_PROM=$!
-
+ 
                             HEALTH_URL="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}/actuator/health"
-
+ 
                             echo "Waiting for ${HEALTH_URL} ..."
                             for i in $(seq 1 30); do
                                 if curl -fsS "${HEALTH_URL}" | grep -q '"status":"UP"'; then
@@ -555,7 +573,7 @@ pipeline {
                                 fi
                                 sleep 5
                             done
-
+ 
                             curl -fsS "http://localhost:${LOCAL_PROM_PORT}/-/healthy"
                             echo ""
                             echo "Prometheus (k8s) is healthy."
@@ -564,11 +582,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 17. DAST - OWASP ZAP BASELINE (non bloquant)
         // ============================================================
-
+ 
         stage('DAST - OWASP ZAP') {
             environment {
                 // Image officielle ZAP sur Docker Hub (GHCR coupe souvent les gros pulls sous WSL2)
@@ -578,7 +596,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     script {
                         runStage(env.STAGE_NAME) {
-
+ 
                             // 1) Image : pull seulement si absente, 3 tentatives
                             retry(3) {
                                 sh '''
@@ -586,17 +604,17 @@ pipeline {
                                       || docker pull "${ZAP_IMAGE}"
                                 '''
                             }
-
+ 
                             // 2) Port-forward + attente de l'application + scan baseline
                             sh '''
                                 set -e
                                 PF_APP=""
                                 trap 'kill $PF_APP 2>/dev/null || true' EXIT
-
+ 
                                 kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
                                     -n "${K8S_NAMESPACE}" > "${REPORTS_DIR}/pf-zap.log" 2>&1 &
                                 PF_APP=$!
-
+ 
                                 TARGET="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}"
                                 for i in $(seq 1 30); do
                                     if curl -fsS "${TARGET}/actuator/health" | grep -q '"status":"UP"'; then
@@ -606,7 +624,7 @@ pipeline {
                                     [ "$i" -eq 30 ] && { echo "Application injoignable"; cat "${REPORTS_DIR}/pf-zap.log"; exit 1; }
                                     sleep 2
                                 done
-
+ 
                                 docker run --rm --network host \
                                     -v "$(pwd)/${REPORTS_DIR}:/zap/wrk:rw" \
                                     "${ZAP_IMAGE}" \
@@ -621,30 +639,57 @@ pipeline {
                 }
             }
         }
+ 
+        // ============================================================
+        // 18. EMAIL NOTIFICATION (uniquement si le build est SUCCESS)
+        // ============================================================
+ 
+        stage('EMAIL NOTIFICATION') {
+            when {
+                expression { currentBuild.currentResult == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    runStage(env.STAGE_NAME) {
+ 
+                        // 1) Rapport à jour pour le corps du mail
+                        writeReportInputs()
+                        sh 'python3 ci/devsecops_report.py > /dev/null'
+                        def resume = readFile("${env.REPORTS_DIR}/summary-line.txt").trim()
+ 
+                        // 2) Envoi : corps = rapport HTML complet, + pièces jointes
+                        emailext(
+                            to: env.NOTIFY_EMAIL,
+                            subject: "✅ SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER} - ${resume}",
+                            mimeType: 'text/html',
+                            body: '''<p>Bonjour,</p>
+<p>Le pipeline <b>${JOB_NAME} #${BUILD_NUMBER}</b> s'est terminé avec succès.
+L'image <b>${ENV,var="DOCKER_IMAGE"}</b> est déployée dans le namespace <b>${ENV,var="K8S_NAMESPACE"}</b>.</p>
+<p>🔗 Build : <a href="${BUILD_URL}">${BUILD_URL}</a><br>
+📊 Rapport en ligne : <a href="${BUILD_URL}DevSecOps_20Report/">${BUILD_URL}DevSecOps_20Report/</a></p>
+<hr>
+${FILE,path="reports/devsecops-report-email.html"}''',
+                            attachmentsPattern: 'reports/devsecops-report-email.html, reports/zap-report.html'
+                        )
+                        echo "E-mail de notification envoyé à ${env.NOTIFY_EMAIL}"
+                    }
+                }
+            }
+        }
     }
-
+ 
     // ================================================================
     // POST ACTIONS  (triple guillemets doubles => variables interpolées)
     // ================================================================
-
+ 
     post {
-
+ 
         always {
             // 1) Statut + durée de chaque stage -> reports/stages.txt
             script {
-                def lines = []
-                for (String k : STAGE_STATUS.keySet()) {
-                    lines << "${k}|${STAGE_STATUS[k]}|${STAGE_DURATION[k] ?: 0}"
-                }
-                writeFile file: "${env.REPORTS_DIR}/stages.txt", text: lines.join('\n') + '\n'
-                writeFile file: "${env.REPORTS_DIR}/meta.txt", text: """result=${currentBuild.currentResult}
-qualityGate=${STAGE_INFO['qualityGate'] ?: 'N/A'}
-sonarUrl=${STAGE_INFO['sonarUrl'] ?: ''}
-sonarKey=${env.SONAR_PROJECT_KEY}
-image=${env.DOCKER_IMAGE}
-"""
+                writeReportInputs()
             }
-
+ 
             // 2) Génération du rapport DevSecOps (HTML + résumé console)
             sh '''
                 if [ -f ci/devsecops_report.py ]; then
@@ -654,7 +699,7 @@ image=${env.DOCKER_IMAGE}
                     echo "ci/devsecops_report.py introuvable : rapport non genere"
                 fi
             '''
-
+ 
             // 3) Résumé court dans la description du build + publication HTML
             script {
                 if (fileExists("${env.REPORTS_DIR}/summary-line.txt")) {
@@ -674,7 +719,7 @@ image=${env.DOCKER_IMAGE}
                     echo "Plugin HTML Publisher absent : rapport disponible dans les artefacts (reports/devsecops-report.html)"
                 }
             }
-
+ 
             archiveArtifacts(artifacts: 'reports/**', allowEmptyArchive: true)
             sh 'docker logout || true'
             echo """
@@ -691,15 +736,15 @@ Rapport   : ${env.BUILD_URL}DevSecOps_20Report/
 ======================================
 """
         }
-
+ 
         success {
             echo "PIPELINE SUCCESS - ${env.DOCKER_IMAGE} déployée dans ${env.K8S_NAMESPACE}"
         }
-
+ 
         unstable {
             echo "PIPELINE UNSTABLE - voir le rapport ZAP dans les artefacts (reports/zap-report.html)"
         }
-
+ 
         failure {
             echo "PIPELINE FAILURE - consulter la console et le rapport DevSecOps"
         }
