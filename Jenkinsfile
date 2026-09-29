@@ -405,24 +405,48 @@ pipeline {
         // ============================================================
 
         stage('DAST - OWASP ZAP') {
+            environment {
+                // Image officielle ZAP sur Docker Hub (GHCR coupe souvent les gros pulls sous WSL2)
+                ZAP_IMAGE = 'zaproxy/zap-stable'
+            }
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+
+                    // 1) Image : pull seulement si absente, 3 tentatives
+                    retry(3) {
+                        sh '''
+                            docker image inspect "${ZAP_IMAGE}" > /dev/null 2>&1 \
+                              || docker pull "${ZAP_IMAGE}"
+                        '''
+                    }
+
+                    // 2) Port-forward + attente de l'application + scan baseline
                     sh '''
                         set -e
                         PF_APP=""
                         trap 'kill $PF_APP 2>/dev/null || true' EXIT
 
                         kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
-                            -n "${K8S_NAMESPACE}" > pf-zap.log 2>&1 &
+                            -n "${K8S_NAMESPACE}" > "${REPORTS_DIR}/pf-zap.log" 2>&1 &
                         PF_APP=$!
-                        sleep 5
+
+                        TARGET="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}"
+                        for i in $(seq 1 30); do
+                            if curl -fsS "${TARGET}/actuator/health" | grep -q '"status":"UP"'; then
+                                echo "Application joignable pour ZAP"
+                                break
+                            fi
+                            [ "$i" -eq 30 ] && { echo "Application injoignable"; cat "${REPORTS_DIR}/pf-zap.log"; exit 1; }
+                            sleep 2
+                        done
 
                         docker run --rm --network host \
                             -v "$(pwd)/${REPORTS_DIR}:/zap/wrk:rw" \
-                            ghcr.io/zaproxy/zaproxy:stable \
+                            "${ZAP_IMAGE}" \
                             zap-baseline.py \
-                                -t "http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}/" \
+                                -t "${TARGET}/" \
                                 -r zap-report.html \
+                                -J zap-report.json \
                                 -I
                     '''
                 }
@@ -466,4 +490,3 @@ Build URL : ${env.BUILD_URL}
         }
     }
 }
-
