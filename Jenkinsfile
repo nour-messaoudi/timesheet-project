@@ -1,52 +1,52 @@
 pipeline {
-
+ 
     agent any
-
+ 
     // ============================================================
     // OPTIONS
     // ============================================================
-
+ 
     options {
         skipDefaultCheckout(true)          // évite le double checkout
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 60, unit: 'MINUTES')
     }
-
+ 
     // ============================================================
     // ENVIRONMENT
     // ============================================================
-
+ 
     environment {
-
+ 
         // Docker
         DOCKER_REPOSITORY = 'nouuur/timesheet'
         DOCKER_IMAGE      = "${DOCKER_REPOSITORY}:${BUILD_NUMBER}"
-
+ 
         // Kubernetes
         K8S_NAMESPACE     = 'timesheet-platform'
         APP_SERVICE       = 'timesheet'      // nom du Service k8s de l'app
         PROM_SERVICE      = 'prometheus'     // nom du Service k8s de Prometheus
-
+ 
         // Application
         APP_PORT          = '8082'           // port du Service k8s
         APP_CONTEXT_PATH  = '/timesheet-devops'
-
+ 
         // Ports locaux utilisés par kubectl port-forward
         LOCAL_APP_PORT    = '18082'
         LOCAL_PROM_PORT   = '19090'
-
+ 
         // DevSecOps
         REPORTS_DIR       = 'reports'
         TRIVY_TIMEOUT     = '20m'
     }
-
+ 
     stages {
-
+ 
         // ============================================================
         // 1. TOOL CHECK
         // ============================================================
-
+ 
         stage('TOOL CHECK') {
             steps {
                 sh '''
@@ -64,11 +64,11 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 2. CHECKOUT FROM GITHUB
         // ============================================================
-
+ 
         stage('CHECKOUT FROM GITHUB') {
             steps {
                 checkout([
@@ -80,7 +80,7 @@ pipeline {
                     ]],
                     extensions: [[$class: 'CleanBeforeCheckout']]
                 ])
-
+ 
                 sh '''
                     set -e
                     echo "Commit : $(git log -1 --oneline)"
@@ -89,11 +89,11 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 3. SECRET SECURITY SCAN  (shift-left : avant le build)
         // ============================================================
-
+ 
         stage('SECRET SECURITY SCAN') {
             steps {
                 sh '''
@@ -103,21 +103,21 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 4. CLEAN PROJECT
         // ============================================================
-
+ 
         stage('CLEAN PROJECT') {
             steps {
                 sh 'mvn -B clean'
             }
         }
-
+ 
         // ============================================================
         // 5. BUILD ARTIFACT
         // ============================================================
-
+ 
         stage('BUILD ARTIFACT') {
             steps {
                 sh '''
@@ -127,11 +127,11 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 6. UNIT & SECURITY TESTS  (+ rapport de couverture JaCoCo)
         // ============================================================
-
+ 
         stage('UNIT & SECURITY TESTS') {
             steps {
                 sh 'mvn -B test jacoco:report'
@@ -145,11 +145,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 7. SAST - SONARQUBE
         // ============================================================
-
+ 
         stage('SAST - SONARQUBE') {
             steps {
                 withSonarQubeEnv('SonarQube') {
@@ -164,11 +164,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 8. QUALITY GATE  (nécessite le webhook SonarQube -> Jenkins)
         // ============================================================
-
+ 
         stage('QUALITY GATE') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -176,11 +176,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 9. SCA - DEPENDENCIES SCAN (Trivy fs sur pom.xml)
         // ============================================================
-
+ 
         stage('SCA - DEPENDENCIES SCAN') {
             steps {
                 sh '''
@@ -197,11 +197,11 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 10. IaC SCAN (Dockerfile + manifests k8s)
         // ============================================================
-
+ 
         stage('IaC SECURITY SCAN') {
             steps {
                 sh '''
@@ -216,21 +216,21 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 11. PUBLISH / ARCHIVE ARTIFACT
         // ============================================================
-
+ 
         stage('PUBLISH/ARCHIVE ARTIFACT') {
             steps {
                 archiveArtifacts(artifacts: 'target/*.jar', fingerprint: true)
             }
         }
-
+ 
         // ============================================================
         // 12. BUILD DOCKER IMAGE
         // ============================================================
-
+ 
         stage('BUILD DOCKER IMAGE') {
             steps {
                 sh '''
@@ -241,23 +241,23 @@ pipeline {
                 '''
             }
         }
-
+ 
         // ============================================================
         // 13. TRIVY IMAGE SECURITY SCAN (+ SBOM)
         // ============================================================
-
+ 
         stage('TRIVY IMAGE SECURITY SCAN') {
             steps {
                 sh '''
                     set -e
-
+ 
                     # SBOM CycloneDX (traçabilité)
                     trivy image \
                         --timeout "${TRIVY_TIMEOUT}" \
                         --format cyclonedx \
                         --output "${REPORTS_DIR}/sbom-cyclonedx.json" \
                         "${DOCKER_IMAGE}"
-
+ 
                     # Security gate : bloque sur HIGH/CRITICAL corrigeables
                     trivy image \
                         --scanners vuln \
@@ -269,16 +269,16 @@ pipeline {
                         --output "${REPORTS_DIR}/trivy-image.txt" \
                         "${DOCKER_IMAGE}" \
                     || { cat "${REPORTS_DIR}/trivy-image.txt"; exit 1; }
-
+ 
                     cat "${REPORTS_DIR}/trivy-image.txt"
                 '''
             }
         }
-
+ 
         // ============================================================
         // 14. PUSH TO DOCKERHUB
         // ============================================================
-
+ 
         stage('PUSH TO DOCKERHUB') {
             steps {
                 withCredentials([usernamePassword(
@@ -289,17 +289,32 @@ pipeline {
                     sh '''
                         set -e
                         echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
-                        docker push "${DOCKER_IMAGE}"
+ 
+                        # Réseau WSL2 instable : 3 tentatives (les couches déjà envoyées ne sont pas renvoyées)
+                        for i in 1 2 3; do
+                            if docker push "${DOCKER_IMAGE}"; then
+                                echo "Push OK (tentative $i)"
+                                break
+                            fi
+                            if [ "$i" -eq 3 ]; then
+                                echo "Push KO apres 3 tentatives"
+                                docker logout || true
+                                exit 1
+                            fi
+                            echo "Push interrompu, nouvelle tentative dans 15 s..."
+                            sleep 15
+                        done
+ 
                         docker logout
                     '''
                 }
             }
         }
-
+ 
         // ============================================================
         // 15. DEPLOY (Kubernetes / minikube)
         // ============================================================
-
+ 
         stage('DEPLOY') {
             steps {
                 withCredentials([usernamePassword(
@@ -309,41 +324,41 @@ pipeline {
                 )]) {
                     sh '''
                         set -e
-
+ 
                         kubectl get nodes
-
+ 
                         kubectl apply -f k8s/namespace.yaml
-
+ 
                         kubectl create secret generic mysql-secret \
                             -n "${K8S_NAMESPACE}" \
                             --from-literal=MYSQL_USER="${DB_USERNAME}" \
                             --from-literal=MYSQL_PASSWORD="${DB_PASSWORD}" \
                             --dry-run=client -o yaml | kubectl apply -f -
-
+ 
                         kubectl apply \
                             -f k8s/mysql-pvc.yaml \
                             -f k8s/mysql-deployment.yaml \
                             -f k8s/mysql-service.yaml
-
+ 
                         kubectl apply \
                             -f k8s/timesheet-deployment.yaml \
                             -f k8s/timesheet-service.yaml
-
+ 
                         kubectl apply \
                             -f k8s/prometheus-configmap.yaml \
                             -f k8s/prometheus-deployment.yaml \
                             -f k8s/prometheus-service.yaml
-
+ 
                         if [ -f k8s/grafana-deployment.yaml ] && [ -f k8s/grafana-service.yaml ]; then
                             kubectl apply -f k8s/grafana-deployment.yaml -f k8s/grafana-service.yaml
                         else
                             echo "Grafana manifests not found. Skipping."
                         fi
-
+ 
                         kubectl set image deployment/timesheet \
                             timesheet="${DOCKER_IMAGE}" \
                             -n "${K8S_NAMESPACE}"
-
+ 
                         if ! kubectl rollout status deployment/timesheet \
                                 -n "${K8S_NAMESPACE}" --timeout=300s; then
                             echo "=========== ROLLOUT KO : DIAGNOSTIC ==========="
@@ -359,11 +374,11 @@ pipeline {
                 }
             }
         }
-
+ 
         // ============================================================
         // 16. HEALTH CHECK (via kubectl port-forward)
         // ============================================================
-
+ 
         stage('HEALTH CHECK') {
             steps {
                 sh '''
@@ -371,23 +386,23 @@ pipeline {
                     PF_APP=""
                     PF_PROM=""
                     trap 'kill $PF_APP $PF_PROM 2>/dev/null || true' EXIT
-
+ 
                     kubectl get pods -n "${K8S_NAMESPACE}" -o wide
-
+ 
                     for d in mysqldb timesheet prometheus; do
                         kubectl rollout status "deployment/$d" -n "${K8S_NAMESPACE}" --timeout=180s
                     done
-
+ 
                     kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
                         -n "${K8S_NAMESPACE}" > pf-app.log 2>&1 &
                     PF_APP=$!
-
+ 
                     kubectl port-forward "svc/${PROM_SERVICE}" "${LOCAL_PROM_PORT}:9090" \
                         -n "${K8S_NAMESPACE}" > pf-prom.log 2>&1 &
                     PF_PROM=$!
-
+ 
                     HEALTH_URL="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}/actuator/health"
-
+ 
                     echo "Waiting for ${HEALTH_URL} ..."
                     for i in $(seq 1 30); do
                         if curl -fsS "${HEALTH_URL}" | grep -q '"status":"UP"'; then
@@ -401,18 +416,18 @@ pipeline {
                         fi
                         sleep 5
                     done
-
+ 
                     curl -fsS "http://localhost:${LOCAL_PROM_PORT}/-/healthy"
                     echo ""
                     echo "Prometheus (k8s) is healthy."
                 '''
             }
         }
-
+ 
         // ============================================================
         // 17. DAST - OWASP ZAP BASELINE (non bloquant)
         // ============================================================
-
+ 
         stage('DAST - OWASP ZAP') {
             environment {
                 // Image officielle ZAP sur Docker Hub (GHCR coupe souvent les gros pulls sous WSL2)
@@ -420,7 +435,7 @@ pipeline {
             }
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-
+ 
                     // 1) Image : pull seulement si absente, 3 tentatives
                     retry(3) {
                         sh '''
@@ -428,17 +443,17 @@ pipeline {
                               || docker pull "${ZAP_IMAGE}"
                         '''
                     }
-
+ 
                     // 2) Port-forward + attente de l'application + scan baseline
                     sh '''
                         set -e
                         PF_APP=""
                         trap 'kill $PF_APP 2>/dev/null || true' EXIT
-
+ 
                         kubectl port-forward "svc/${APP_SERVICE}" "${LOCAL_APP_PORT}:${APP_PORT}" \
                             -n "${K8S_NAMESPACE}" > "${REPORTS_DIR}/pf-zap.log" 2>&1 &
                         PF_APP=$!
-
+ 
                         TARGET="http://localhost:${LOCAL_APP_PORT}${APP_CONTEXT_PATH}"
                         for i in $(seq 1 30); do
                             if curl -fsS "${TARGET}/actuator/health" | grep -q '"status":"UP"'; then
@@ -448,7 +463,7 @@ pipeline {
                             [ "$i" -eq 30 ] && { echo "Application injoignable"; cat "${REPORTS_DIR}/pf-zap.log"; exit 1; }
                             sleep 2
                         done
-
+ 
                         docker run --rm --network host \
                             -v "$(pwd)/${REPORTS_DIR}:/zap/wrk:rw" \
                             "${ZAP_IMAGE}" \
@@ -462,13 +477,13 @@ pipeline {
             }
         }
     }
-
+ 
     // ================================================================
     // POST ACTIONS  (triple guillemets doubles => variables interpolées)
     // ================================================================
-
+ 
     post {
-
+ 
         always {
             archiveArtifacts(artifacts: 'reports/**', allowEmptyArchive: true)
             sh 'docker logout || true'
@@ -485,17 +500,20 @@ Build URL : ${env.BUILD_URL}
 ======================================
 """
         }
-
+ 
         success {
             echo "PIPELINE SUCCESS - ${env.DOCKER_IMAGE} déployée dans ${env.K8S_NAMESPACE}"
         }
-
+ 
         unstable {
             echo "PIPELINE UNSTABLE - voir le rapport ZAP dans les artefacts (reports/zap-report.html)"
         }
-
+ 
         failure {
             echo "PIPELINE FAILURE - consulter la console et les rapports dans reports/"
         }
     }
 }
+ 
+
+
