@@ -344,8 +344,17 @@ pipeline {
                             timesheet="${DOCKER_IMAGE}" \
                             -n "${K8S_NAMESPACE}"
 
-                        kubectl rollout status deployment/timesheet \
-                            -n "${K8S_NAMESPACE}" --timeout=300s
+                        if ! kubectl rollout status deployment/timesheet \
+                                -n "${K8S_NAMESPACE}" --timeout=300s; then
+                            echo "=========== ROLLOUT KO : DIAGNOSTIC ==========="
+                            kubectl get pods -n "${K8S_NAMESPACE}" -o wide || true
+                            kubectl describe pods -n "${K8S_NAMESPACE}" -l app=timesheet | tail -n 40 || true
+                            kubectl logs deployment/timesheet -n "${K8S_NAMESPACE}" --tail=80 || true
+                            kubectl get events -n "${K8S_NAMESPACE}" --sort-by=.lastTimestamp | tail -n 20 || true
+                            echo "=========== ROLLBACK vers la version precedente ==========="
+                            kubectl rollout undo deployment/timesheet -n "${K8S_NAMESPACE}" || true
+                            exit 1
+                        fi
                     '''
                 }
             }
