@@ -1,0 +1,53 @@
+@security
+Feature: Tests d'attaque automatisés de l'application timesheet (Gauntlt)
+
+  Background:
+    Given "curl" is installed
+    And "nmap" is installed
+    And the default aruba timeout is 60 seconds
+    And the following profile:
+      | name     | value     |
+      | hostname | localhost |
+
+  Scenario: L'application répond et est en bonne santé
+    When I launch a "curl" attack with:
+      """
+      curl -s http://<hostname>:18082/timesheet-devops/actuator/health
+      """
+    Then the output should contain "UP"
+
+  Scenario: L'endpoint sensible /actuator/env n'est pas exposé
+    When I launch a "curl" attack with:
+      """
+      curl -s -o /dev/null -w %{http_code} http://<hostname>:18082/timesheet-devops/actuator/env
+      """
+    Then the output should contain "404"
+
+  Scenario: Le heapdump de la JVM n'est pas téléchargeable
+    When I launch a "curl" attack with:
+      """
+      curl -s -o /dev/null -w %{http_code} http://<hostname>:18082/timesheet-devops/actuator/heapdump
+      """
+    Then the output should contain "404"
+
+  Scenario: Les pages d'erreur ne divulguent pas de stacktrace
+    When I launch a "curl" attack with:
+      """
+      curl -s http://<hostname>:18082/timesheet-devops/page-inexistante
+      """
+    Then the output should not contain "Exception"
+    And the output should not contain "at org.springframework"
+
+  Scenario: Aucun en-tête ne divulgue la technologie du serveur
+    When I launch a "curl" attack with:
+      """
+      curl -s -I http://<hostname>:18082/timesheet-devops/actuator/health
+      """
+    Then the output should not contain "X-Powered-By"
+
+  Scenario: La base MySQL n'est pas exposée sur l'hôte
+    When I launch an "nmap" attack with:
+      """
+      nmap -Pn -p 3306 <hostname>
+      """
+    Then the output should not match /3306\/tcp\s+open/

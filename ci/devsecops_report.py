@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
 Génère le rapport DevSecOps du pipeline Jenkins (sans dépendance externe).
- 
+
 Entrées (dans reports/ et target/) :
   stages.txt, meta.txt, secret-scan.txt, sonar-measures.json,
   trivy-sca.json, trivy-iac.json, trivy-image.json, sbom-cyclonedx.json,
   zap-report.json, target/surefire-reports/TEST-*.xml, target/site/jacoco/jacoco.xml
- 
+
 Sorties (dans reports/) :
   devsecops-report.html + devsecops-report.css  -> rapport visuel
   devsecops-summary.txt                        -> résumé texte (aussi affiché en console)
   summary-line.txt                             -> ligne courte pour la description du build
 """
- 
+
 import glob
 import html
 import json
@@ -20,9 +20,9 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
- 
+
 REPORTS = os.environ.get("REPORTS_DIR", "reports")
- 
+
 # ----------------------------------------------------------------------------
 # Catalogue des stages (noms identiques à ceux du Jenkinsfile)
 # ----------------------------------------------------------------------------
@@ -44,27 +44,28 @@ STAGES = [
     ("DEPLOY", "kubectl · minikube", "Déploie sur Kubernetes (rollback auto si échec)", "ci"),
     ("HEALTH CHECK", "Actuator · Prometheus", "Vérifie que l'application et le monitoring répondent", "ci"),
     ("DAST - OWASP ZAP", "OWASP ZAP baseline", "Teste l'application en cours d'exécution (DAST)", "sec"),
+    ("SECURITY TESTS - GAUNTLT", "Gauntlt (curl · nmap)", "Tests d'attaque BDD sur l'application déployée", "sec"),
     ("EMAIL NOTIFICATION", "Email Extension · Gmail SMTP", "Envoie le rapport par e-mail si le build est SUCCESS", "ci"),
 ]
- 
+
 SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Utilitaires de lecture
 # ----------------------------------------------------------------------------
 def path(name):
     return os.path.join(REPORTS, name)
- 
- 
+
+
 def load_json(name):
     try:
         with open(path(name), encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
- 
- 
+
+
 def read_kv(name):
     data = {}
     try:
@@ -76,8 +77,8 @@ def read_kv(name):
     except Exception:
         pass
     return data
- 
- 
+
+
 def read_stages():
     res = {}
     try:
@@ -89,19 +90,19 @@ def read_stages():
     except Exception:
         pass
     return res
- 
- 
+
+
 def esc(v):
     return html.escape(str(v)) if v is not None else ""
- 
- 
+
+
 def fmt_dur(sec):
     if sec is None:
         return "—"
     m, s = divmod(int(sec), 60)
     return f"{m} min {s:02d} s" if m else f"{s} s"
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Parsers par outil
 # ----------------------------------------------------------------------------
@@ -118,8 +119,8 @@ def parse_secrets():
     except Exception:
         return None
     return hooks
- 
- 
+
+
 def parse_tests():
     files = glob.glob("target/surefire-reports/TEST-*.xml")
     if not files:
@@ -136,8 +137,8 @@ def parse_tests():
         t["tests"] += n; t["failures"] += fa; t["errors"] += er; t["skipped"] += sk; t["time"] += tm
         t["suites"].append((r.get("name", os.path.basename(fp)).split(".")[-1], n, fa + er, sk, tm))
     return t
- 
- 
+
+
 def parse_coverage():
     fp = "target/site/jacoco/jacoco.xml"
     if not os.path.exists(fp):
@@ -152,20 +153,20 @@ def parse_coverage():
         total = missed + covered
         cov[c.get("type")] = round(100.0 * covered / total, 1) if total else 0.0
     return cov
- 
- 
+
+
 def parse_sonar():
     data = load_json("sonar-measures.json")
     if not data:
         return None
     m = {x["metric"]: x.get("value") for x in data.get("component", {}).get("measures", [])}
- 
+
     def pick(*keys):
         for k in keys:
             if k in m and m[k] is not None:
                 return m[k]
         return None
- 
+
     return {
         "reliability": pick("software_quality_reliability_issues", "bugs"),
         "security": pick("software_quality_security_issues", "vulnerabilities"),
@@ -175,8 +176,8 @@ def parse_sonar():
         "duplication": pick("duplicated_lines_density"),
         "ncloc": pick("ncloc"),
     }
- 
- 
+
+
 def parse_trivy_vulns(name):
     data = load_json(name)
     if data is None:
@@ -196,8 +197,8 @@ def parse_trivy_vulns(name):
     out["items"].sort(key=lambda x: SEV_ORDER.index(x["sev"]) if x["sev"] in SEV_ORDER else 9)
     out["total"] = len(out["items"])
     return out
- 
- 
+
+
 def parse_trivy_iac():
     data = load_json("trivy-iac.json")
     if data is None:
@@ -216,15 +217,42 @@ def parse_trivy_iac():
                                                  "resolution": m.get("Resolution", ""), "files": set()})
             rule["files"].add(r.get("Target", "?"))
     return out
- 
- 
+
+
 def parse_sbom():
     data = load_json("sbom-cyclonedx.json")
     if data is None:
         return None
     return len(data.get("components", []) or [])
- 
- 
+
+
+def parse_gauntlt():
+    try:
+        with open(path("gauntlt.txt"), encoding="utf-8", errors="ignore") as f:
+            txt = f.read()
+    except Exception:
+        return None
+    import re
+    out = {"scenarios": 0, "passed": 0, "failed": 0, "steps": 0, "list": [], "failing": []}
+    m = re.search(r"(\d+) scenarios? \(([^)]*)\)", txt)
+    if m:
+        out["scenarios"] = int(m.group(1))
+        p = re.search(r"(\d+) passed", m.group(2)); f = re.search(r"(\d+) failed", m.group(2))
+        out["passed"] = int(p.group(1)) if p else 0
+        out["failed"] = int(f.group(1)) if f else 0
+    m = re.search(r"(\d+) steps? \(", txt)
+    if m:
+        out["steps"] = int(m.group(1))
+    out["list"] = [l.split("Scenario:", 1)[1].split("#")[0].strip()
+                   for l in txt.splitlines() if l.strip().startswith("Scenario:")]
+    if "Failing Scenarios:" in txt:
+        block = txt.split("Failing Scenarios:", 1)[1]
+        for l in block.splitlines():
+            if "# Scenario:" in l:
+                out["failing"].append(l.split("# Scenario:", 1)[1].strip())
+    return out
+
+
 def parse_zap():
     data = load_json("zap-report.json")
     if data is None:
@@ -244,8 +272,8 @@ def parse_zap():
     order = ["High", "Medium", "Low", "Informational"]
     out["alerts"].sort(key=lambda x: order.index(x["risk"]))
     return out
- 
- 
+
+
 def strip_tags(s):
     out, inside = [], False
     for ch in s or "":
@@ -256,26 +284,26 @@ def strip_tags(s):
         elif not inside:
             out.append(ch)
     return "".join(out).strip()
- 
- 
+
+
 def git_info():
     try:
         return subprocess.check_output(["git", "log", "-1", "--format=%h — %s (%an)"], text=True).strip()
     except Exception:
         return "—"
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Construction des résultats par stage
 # ----------------------------------------------------------------------------
 def sev_text(counts, keys=("CRITICAL", "HIGH")):
     return " · ".join(f"{k.capitalize()} {counts.get(k, 0)}" for k in keys)
- 
- 
+
+
 def build():
     stages_rt = read_stages()
     meta = read_kv("meta.txt")
- 
+
     secrets = parse_secrets()
     tests = parse_tests()
     cov = parse_coverage()
@@ -285,11 +313,12 @@ def build():
     img = parse_trivy_vulns("trivy-image.json")
     sbom = parse_sbom()
     zap = parse_zap()
+    gauntlt = parse_gauntlt()
     qg = meta.get("qualityGate", "N/A")
- 
+
     key = {}
     level = {}  # ok | warn | ko | na  (verdict sécurité)
- 
+
     if secrets is not None:
         failed = [h for h, s in secrets if s == "Failed"]
         key["SECRET SECURITY SCAN"] = f"{len(secrets)} contrôles · {len(failed)} en échec"
@@ -323,7 +352,7 @@ def build():
         c = zap["counts"]
         key["DAST - OWASP ZAP"] = f"High {c['High']} · Medium {c['Medium']} · Low {c['Low']} · Info {c['Informational']}"
         level["DAST - OWASP ZAP"] = "ko" if c["High"] else ("warn" if c["Medium"] or c["Low"] else "ok")
- 
+
     image = os.environ.get("DOCKER_IMAGE", meta.get("image", ""))
     jar = sorted(glob.glob("target/*.jar"))
     jar_txt = f"{os.path.basename(jar[0])} ({os.path.getsize(jar[0]) // (1024 * 1024)} Mo)" if jar else "JAR"
@@ -337,12 +366,16 @@ def build():
     key.setdefault("DEPLOY", f"namespace {os.environ.get('K8S_NAMESPACE', '')}")
     key.setdefault("HEALTH CHECK", "actuator/health = UP · Prometheus healthy")
     key.setdefault("EMAIL NOTIFICATION", "Rapport envoyé par e-mail")
- 
+    if gauntlt is not None:
+        key["SECURITY TESTS - GAUNTLT"] = (f"{gauntlt['passed']}/{gauntlt['scenarios']} scénarios OK"
+                                           f" · {gauntlt['failed']} en échec · {gauntlt['steps']} steps")
+        level["SECURITY TESTS - GAUNTLT"] = "ko" if gauntlt["failed"] or not gauntlt["scenarios"] else "ok"
+
     rows = []
     for name, tool, role, cat in STAGES:
         rt = stages_rt.get(name)
         status = rt["status"] if rt else "SKIPPED"
-        if name == "DAST - OWASP ZAP" and status == "FAILED":
+        if name in ("DAST - OWASP ZAP", "SECURITY TESTS - GAUNTLT") and status == "FAILED":
             status = "UNSTABLE"
         if status == "RUNNING":
             status = "EN COURS"
@@ -352,13 +385,13 @@ def build():
             "key": key.get(name, "") if status != "SKIPPED" else "Non exécuté (stage précédent en échec)",
             "level": level.get(name, "na") if status != "SKIPPED" else "na",
         })
- 
+
     return {
         "meta": meta, "rows": rows, "secrets": secrets, "tests": tests, "cov": cov, "sonar": sonar,
-        "qg": qg, "sca": sca, "iac": iac, "img": img, "sbom": sbom, "zap": zap, "image": image,
+        "qg": qg, "sca": sca, "iac": iac, "img": img, "sbom": sbom, "zap": zap, "gauntlt": gauntlt, "image": image,
     }
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Rendu HTML
 # ----------------------------------------------------------------------------
@@ -398,27 +431,27 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
 .links a{margin-right:14px}
 footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
 """
- 
+
 VERDICT_LABEL = {"ok": "Conforme", "warn": "À surveiller", "ko": "Bloquant", "na": "N/A"}
- 
- 
+
+
 def badge(text, cls=None):
     return f'<span class="b {esc(cls or text)}">{esc(text)}</span>'
- 
- 
+
+
 def kpi(label, value, detail, level):
     return (f'<div class="kpi {level}"><div class="lbl">{esc(label)}</div>'
             f'<div class="val">{esc(value)}</div><div class="det">{esc(detail)}</div></div>')
- 
- 
+
+
 def render_html(d):
     meta = d["meta"]
     result = meta.get("result", "UNKNOWN")
     vcls = {"SUCCESS": "ok", "UNSTABLE": "warn", "FAILURE": "ko"}.get(result, "na")
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
- 
+
     t, cov, s, sca, iac, img, zap = d["tests"], d["cov"], d["sonar"], d["sca"], d["iac"], d["img"], d["zap"]
- 
+
     k = []
     if t:
         ko = t["failures"] + t["errors"]
@@ -442,7 +475,7 @@ def render_html(d):
         c = zap["counts"]
         k.append(kpi("DAST (ZAP)", f"{c['High']} High", f"Medium {c['Medium']} · Low {c['Low']}",
                      "ko" if c["High"] else ("warn" if c["Medium"] or c["Low"] else "ok")))
- 
+
     # --- tableau des stages
     srows = []
     for i, r in enumerate(d["rows"], 1):
@@ -451,7 +484,7 @@ def render_html(d):
             f'<div class="muted">{esc(r["role"])}</div></td><td>{esc(r["tool"])}</td>'
             f'<td>{badge(r["status"])}</td><td>{fmt_dur(r["duration"])}</td><td>{esc(r["key"])}</td>'
             f'<td>{badge(VERDICT_LABEL[r["level"]], r["level"]) if r["cat"] == "sec" else ""}</td></tr>')
- 
+
     parts = [f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rapport DevSecOps #{esc(os.environ.get('BUILD_NUMBER', ''))}</title>
@@ -464,7 +497,7 @@ def render_html(d):
 <p class="intro">Les lignes marquées d'un liseré bleu sont les contrôles de sécurité. « Verdict » indique le niveau de risque détecté.</p>
 <table><tr><th>#</th><th>Stage</th><th>Outil</th><th>Statut</th><th>Durée</th><th>Résultat clé</th><th>Verdict</th></tr>
 {''.join(srows)}</table></section>"""]
- 
+
     # --- secrets
     if d["secrets"] is not None:
         rows = "".join(f"<tr><td>{esc(h)}</td><td>{badge(st, 'ok' if st == 'Passed' else ('ko' if st == 'Failed' else 'na'))}</td></tr>"
@@ -472,7 +505,7 @@ def render_html(d):
         parts.append(f"""<section><h2>2. Détection de secrets — pre-commit</h2>
 <p class="intro">Recherche de mots de passe, clés et tokens commités par erreur. Bloquant.</p>
 <table><tr><th>Contrôle</th><th>Résultat</th></tr>{rows}</table></section>""")
- 
+
     # --- tests
     if t:
         rows = "".join(f"<tr><td>{esc(n)}</td><td>{a}</td><td>{f}</td><td>{sk}</td><td>{tm:.2f} s</td></tr>"
@@ -484,7 +517,7 @@ def render_html(d):
         parts.append(f"""<section><h2>3. Tests unitaires et couverture — JUnit / JaCoCo</h2>
 <p class="intro">{t['tests']} tests en {t['time']:.1f} s. Couverture : {esc(cv or 'n/a')}</p>
 <table><tr><th>Classe de test</th><th>Tests</th><th>Échecs</th><th>Ignorés</th><th>Durée</th></tr>{rows}</table></section>""")
- 
+
     # --- sonar
     sm = s or {}
     link = f' — <a href="{esc(d["meta"].get("sonarUrl", ""))}/dashboard?id={esc(d["meta"].get("sonarKey", ""))}">ouvrir le dashboard</a>' \
@@ -494,7 +527,7 @@ def render_html(d):
 <table><tr><th>Fiabilité (bugs)</th><th>Sécurité (vulnérabilités)</th><th>Security Hotspots</th><th>Maintenabilité</th><th>Couverture</th><th>Duplication</th><th>Lignes de code</th></tr>
 <tr><td>{esc(sm.get('reliability', 'n/a'))}</td><td>{esc(sm.get('security', 'n/a'))}</td><td>{esc(sm.get('hotspots', 'n/a'))}</td>
 <td>{esc(sm.get('maintainability', 'n/a'))}</td><td>{esc(sm.get('coverage', 'n/a'))} %</td><td>{esc(sm.get('duplication', 'n/a'))} %</td><td>{esc(sm.get('ncloc', 'n/a'))}</td></tr></table></section>""")
- 
+
     # --- trivy vulns
     def vuln_section(num, title, intro, data, extra=""):
         if data is None:
@@ -511,14 +544,14 @@ def render_html(d):
             det = '<div class="empty">Aucune vulnérabilité HIGH/CRITICAL détectée.</div>'
         return (f"<section><h2>{num}. {title}</h2><p class='intro'>{intro} {extra}</p>"
                 f"<table><tr><th>Cible analysée</th><th>Type</th><th>Vulnérabilités</th></tr>{tg}</table><br>{det}</section>")
- 
+
     parts.append(vuln_section(5, "SCA — dépendances Maven (Trivy fs)",
                               "CVE HIGH/CRITICAL dans les bibliothèques déclarées dans pom.xml. Non bloquant (le gate est sur l'image).",
                               sca))
     parts.append(vuln_section(6, "Scan de l'image Docker (Trivy image) — Security Gate",
                               "CVE HIGH/CRITICAL corrigeables dans l'OS de base et le JAR. <b>Bloquant</b> : l'image n'est pas poussée si > 0.",
                               img, f"SBOM CycloneDX : {d['sbom']} composants." if d["sbom"] is not None else ""))
- 
+
     # --- IaC
     if iac is not None:
         fr = "".join(f"<tr><td><code>{esc(f)}</code></td><td>{ok}</td><td>{ko}</td></tr>" for f, ok, ko in iac["files"])
@@ -532,7 +565,7 @@ def render_html(d):
         parts.append(f"""<section><h2>7. IaC — Dockerfile &amp; manifests Kubernetes (Trivy config)</h2>
 <p class="intro">{iac['total']} mauvaises configurations HIGH/CRITICAL. Non bloquant.</p>
 <table><tr><th>Fichier</th><th>Contrôles OK</th><th>Échecs</th></tr>{fr}</table><br>{det}</section>""")
- 
+
     # --- ZAP
     if zap is not None:
         if zap["alerts"]:
@@ -547,15 +580,28 @@ def render_html(d):
         parts.append(f"""<section><h2>8. DAST — OWASP ZAP baseline</h2>
 <p class="intro">Scan passif de l'application déployée. High {c['High']} · Medium {c['Medium']} · Low {c['Low']} · Info {c['Informational']}. Non bloquant.
 Rapport complet : <a href="zap-report.html">zap-report.html</a></p>{det}</section>""")
- 
+
+    # --- Gauntlt
+    g = d.get("gauntlt")
+    if g is not None:
+        failing = set(g["failing"])
+        gr = "".join(
+            f"<tr><td>{esc(sc)}</td><td>{badge('Échec', 'ko') if sc in failing else badge('OK', 'ok')}</td></tr>"
+            for sc in g["list"])
+        parts.append(f"""<section><h2>9. Tests d'attaque — Gauntlt</h2>
+<p class="intro">Attaques BDD (curl, nmap) sur l'application déployée : {g['passed']}/{g['scenarios']} scénarios OK,
+{g['failed']} en échec, {g['steps']} steps. Non bloquant. Sortie complète : <a href="gauntlt.txt">gauntlt.txt</a></p>
+<table><tr><th>Scénario</th><th>Résultat</th></tr>{gr}</table></section>""")
+
     parts.append("""<section><h2>Rapports bruts</h2><p class="links">
 <a href="trivy-sca.txt">trivy-sca.txt</a><a href="trivy-iac.txt">trivy-iac.txt</a>
 <a href="trivy-image.txt">trivy-image.txt</a><a href="sbom-cyclonedx.json">sbom-cyclonedx.json</a>
-<a href="zap-report.html">zap-report.html</a><a href="secret-scan.txt">secret-scan.txt</a></p></section>""")
+<a href="zap-report.html">zap-report.html</a><a href="secret-scan.txt">secret-scan.txt</a>
+<a href="gauntlt.txt">gauntlt.txt</a></p></section>""")
     parts.append(f"<footer>Rapport généré automatiquement par ci/devsecops_report.py — {now}</footer></div></body></html>")
     return "\n".join(parts)
- 
- 
+
+
 # ----------------------------------------------------------------------------
 # Résumé texte (console Jenkins) + ligne courte
 # ----------------------------------------------------------------------------
@@ -566,8 +612,8 @@ def render_text(d):
         lines.append(f" {i:<3}{r['name'][:27]:<28}{r['status']:<11}{fmt_dur(r['duration']):<12}{r['key']}")
     lines.append("=" * 100)
     return "\n".join(lines)
- 
- 
+
+
 def summary_line(d):
     p = [f"QG {d['qg']}"]
     if d["tests"]:
@@ -584,9 +630,12 @@ def summary_line(d):
     if d["zap"] is not None:
         c = d["zap"]["counts"]
         p.append(f"ZAP H{c['High']}/M{c['Medium']}/L{c['Low']}")
+    if d.get("gauntlt") is not None:
+        g = d["gauntlt"]
+        p.append(f"Gauntlt {g['passed']}/{g['scenarios']}")
     return " | ".join(p)
- 
- 
+
+
 def main():
     os.makedirs(REPORTS, exist_ok=True)
     d = build()
@@ -606,7 +655,7 @@ def main():
         f.write(summary_line(d) + "\n")
     print(txt)
     print("Rapport HTML : " + path("devsecops-report.html"))
- 
- 
+
+
 if __name__ == "__main__":
     main()
