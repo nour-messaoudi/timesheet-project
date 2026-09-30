@@ -50,4 +50,4 @@ Feature: Tests d'attaque automatisés de l'application timesheet (Gauntlt)
       """
       nmap -Pn -p 3306 <hostname>
       """
-    Then the output should not match /3306\/tcp\s+open/
+    Then the output should not match /3306.tcp\s+open/
