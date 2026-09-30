@@ -80,7 +80,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'tn.esprit.spring.services:timesheet-devops'
 
         // Notification e-mail (à remplacer par votre adresse)
-        NOTIFY_EMAIL      = 'votre.adresse@gmail.com'
+        NOTIFY_EMAIL      = 'nourmess232@gmail.com'
 
         // DevSecOps
         REPORTS_DIR       = 'reports'
