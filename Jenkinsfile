@@ -74,17 +74,24 @@ pipeline {
 
         // Ports locaux utilisés par kubectl port-forward
         LOCAL_APP_PORT    = '18082'
-        LOCAL_PROM_PORT   = '19090'
+        LOCAL_PROM_PORT   = '29090'          // port dédié au pipeline (19090 reste libre pour vos tests manuels)
 
         // SonarQube
         SONAR_PROJECT_KEY = 'tn.esprit.spring.services:timesheet-devops'
 
-        // Notification e-mail (à remplacer par votre adresse)
+        // Notification e-mail
         NOTIFY_EMAIL      = 'nourmess232@gmail.com'
 
         // DevSecOps
         REPORTS_DIR       = 'reports'
         TRIVY_TIMEOUT     = '20m'
+
+        // PRODUCTION / OPERATIONS (outils de sécurité à l'exécution)
+        KUBESCAPE_THRESHOLD = '60'           // score de conformité minimal (%) NSA/MITRE
+        LYNIS_MIN_SCORE     = '50'           // Hardening Index minimal (/100)
+        FALCO_NAMESPACE     = 'falco'
+        TRIVY_OP_NAMESPACE  = 'trivy-system'
+        GRAFANA_SERVICE     = 'grafana'
     }
 
     stages {
@@ -109,6 +116,8 @@ pipeline {
                             pre-commit --version
                             python3 --version
                             curl --version | head -1
+                            kubescape version
+                            lynis show version
                             echo "All required tools are available."
                         '''
                     }
@@ -497,10 +506,17 @@ pipeline {
                                     -f k8s/timesheet-deployment.yaml \
                                     -f k8s/timesheet-service.yaml
 
+                                # Prometheus : la config est montée en subPath (jamais rechargée à chaud)
+                                # => redémarrage uniquement si le ConfigMap (prometheus.yml / alerts.yml) a changé
+                                CM_OUT=$(kubectl apply -f k8s/prometheus-configmap.yaml)
+                                echo "${CM_OUT}"
                                 kubectl apply \
-                                    -f k8s/prometheus-configmap.yaml \
                                     -f k8s/prometheus-deployment.yaml \
                                     -f k8s/prometheus-service.yaml
+                                if echo "${CM_OUT}" | grep -q configured; then
+                                    echo "Configuration Prometheus modifiée : redémarrage"
+                                    kubectl rollout restart deployment/prometheus -n "${K8S_NAMESPACE}"
+                                fi
 
                                 if [ -f k8s/grafana-deployment.yaml ] && [ -f k8s/grafana-service.yaml ]; then
                                     kubectl apply -f k8s/grafana-deployment.yaml -f k8s/grafana-service.yaml
@@ -584,7 +600,65 @@ pipeline {
         }
 
         // ============================================================
-        // 17. DAST - OWASP ZAP BASELINE (non bloquant)
+        // 17. CONFIG SAFETY - KUBESCAPE   [PRODUCTION] (non bloquant)
+        //     Conformité du cluster aux référentiels NSA-CISA et MITRE ATT&CK
+        // ============================================================
+
+        stage('CONFIG SAFETY - KUBESCAPE') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        runStage(env.STAGE_NAME) {
+                            sh '''
+                                set -e
+                                echo "============ KUBESCAPE (NSA + MITRE) ============"
+                                kubescape scan framework nsa,mitre \
+                                    --include-namespaces "${K8S_NAMESPACE}" \
+                                    --format json \
+                                    --output "${REPORTS_DIR}/kubescape.json"
+
+                                # Résumé lisible + seuil de conformité (exit 1 => UNSTABLE)
+                                python3 ci/runtime_checks.py kubescape \
+                                    "${REPORTS_DIR}/kubescape.json" "${KUBESCAPE_THRESHOLD}"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 18. SERVER HARDENING - LYNIS   [PRODUCTION] (non bloquant)
+        //     Audit de durcissement du serveur qui exécute le pipeline
+        // ============================================================
+
+        stage('SERVER HARDENING - LYNIS') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        runStage(env.STAGE_NAME) {
+                            sh '''
+                                set -e
+                                echo "============ LYNIS AUDIT ============"
+                                rc=0
+                                lynis audit system --quick --no-colors \
+                                    --report-file "${REPORTS_DIR}/lynis-report.dat" \
+                                    --log-file "${REPORTS_DIR}/lynis.log" \
+                                    > "${REPORTS_DIR}/lynis.txt" 2>&1 || rc=$?
+                                echo "Lynis termine (code ${rc})"
+
+                                # Hardening Index + avertissements (exit 1 => UNSTABLE)
+                                python3 ci/runtime_checks.py lynis \
+                                    "${REPORTS_DIR}/lynis-report.dat" "${LYNIS_MIN_SCORE}"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 19. DAST - OWASP ZAP BASELINE   [TEST] (non bloquant)
         // ============================================================
 
         stage('DAST - OWASP ZAP') {
@@ -641,7 +715,7 @@ pipeline {
         }
 
         // ============================================================
-        // 18. SECURITY TESTS - GAUNTLT (tests d'attaque BDD, non bloquant)
+        // 20. SECURITY TESTS - GAUNTLT   [TEST] (tests d'attaque BDD, non bloquant)
         // ============================================================
 
         stage('SECURITY TESTS - GAUNTLT') {
@@ -700,7 +774,148 @@ pipeline {
         }
 
         // ============================================================
-        // 19. EMAIL NOTIFICATION (uniquement si le build est SUCCESS)
+        // 21. HOST INTRUSION - FALCO   [PRODUCTION] (non bloquant)
+        //     Simule un comportement d'attaquant dans le pod déployé
+        //     et vérifie que Falco le détecte en temps réel
+        // ============================================================
+
+        stage('HOST INTRUSION - FALCO') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        runStage(env.STAGE_NAME) {
+                            sh '''
+                                set -e
+                                echo "============ FALCO RUNTIME DETECTION ============"
+                                kubectl rollout status daemonset/falco -n "${FALCO_NAMESPACE}" --timeout=120s
+
+                                START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                                POD=$(kubectl get pod -n "${K8S_NAMESPACE}" -l app=timesheet \
+                                        --field-selector=status.phase=Running \
+                                        -o jsonpath='{.items[0].metadata.name}')
+                                echo "Attaque simulee dans le pod : ${POD}"
+
+                                # 1) Lecture d'un fichier d'authentification sensible
+                                kubectl exec -n "${K8S_NAMESPACE}" "${POD}" -- cat /etc/pam.conf > /dev/null 2>&1 || true
+                                # 2) Recherche de cles privees / lecture de /etc/shadow (refusee : conteneur non-root)
+                                kubectl exec -n "${K8S_NAMESPACE}" "${POD}" -- \
+                                    sh -c 'find / -maxdepth 3 -name id_rsa 2>/dev/null; cat /etc/shadow 2>/dev/null; true' || true
+
+                                sleep 15
+                                kubectl logs -n "${FALCO_NAMESPACE}" -l app.kubernetes.io/name=falco -c falco \
+                                    --since-time="${START}" --tail=-1 > "${REPORTS_DIR}/falco.txt" 2>&1 || true
+
+                                # Alertes detectees (exit 1 => aucune detection => UNSTABLE)
+                                python3 ci/runtime_checks.py falco "${REPORTS_DIR}/falco.txt" "${POD}"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 22. CONTINUOUS SCANNING - TRIVY OPERATOR   [OPERATIONS] (non bloquant)
+        //     Rapports de vulnérabilités des workloads en cours d'exécution
+        // ============================================================
+
+        stage('CONTINUOUS SCANNING - TRIVY OPERATOR') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        runStage(env.STAGE_NAME) {
+                            sh '''
+                                set -e
+                                echo "============ TRIVY OPERATOR ============"
+                                kubectl rollout status deployment/trivy-operator -n "${TRIVY_OP_NAMESPACE}" --timeout=120s
+
+                                # Attente du rapport de la nouvelle image (tag = numero de build), 5 min max
+                                FOUND=0
+                                for i in $(seq 1 30); do
+                                    if kubectl get vulnerabilityreports -n "${K8S_NAMESPACE}" \
+                                            -o jsonpath='{range .items[*]}{.report.artifact.tag}{"\\n"}{end}' \
+                                            | grep -qx "${BUILD_NUMBER}"; then
+                                        FOUND=1
+                                        echo "Rapport de l'image ${DOCKER_IMAGE} disponible"
+                                        break
+                                    fi
+                                    echo "Scan de ${DOCKER_IMAGE} en cours... (${i}/30)"
+                                    sleep 10
+                                done
+
+                                kubectl get vulnerabilityreports -n "${K8S_NAMESPACE}" -o json \
+                                    > "${REPORTS_DIR}/trivy-operator-vulns.json"
+                                kubectl get configauditreports -n "${K8S_NAMESPACE}" -o json \
+                                    > "${REPORTS_DIR}/trivy-operator-config.json" || echo '{"items":[]}' > "${REPORTS_DIR}/trivy-operator-config.json"
+                                kubectl get exposedsecretreports -n "${K8S_NAMESPACE}" -o json \
+                                    > "${REPORTS_DIR}/trivy-operator-secrets.json" || echo '{"items":[]}' > "${REPORTS_DIR}/trivy-operator-secrets.json"
+                                kubectl get vulnerabilityreports -n "${K8S_NAMESPACE}" -o wide \
+                                    > "${REPORTS_DIR}/trivy-operator.txt" || true
+
+                                # Synthese (exit 1 si CVE CRITICAL dans l'image deployee => UNSTABLE)
+                                python3 ci/runtime_checks.py trivy-operator "${REPORTS_DIR}" "${BUILD_NUMBER}" "${FOUND}"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 23. CONTINUOUS MONITORING - PROMETHEUS & GRAFANA   [OPERATIONS] (non bloquant)
+        //     Vérifie la supervision : cibles UP, règles d'alerte, alertes actives, Grafana
+        // ============================================================
+
+        stage('CONTINUOUS MONITORING - PROMETHEUS') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        runStage(env.STAGE_NAME) {
+                            sh '''
+                                set -e
+                                echo "============ PROMETHEUS & GRAFANA ============"
+                                PF_PROM=""
+                                trap 'kill $PF_PROM 2>/dev/null || true' EXIT
+
+                                kubectl rollout status deployment/prometheus -n "${K8S_NAMESPACE}" --timeout=180s
+                                kubectl rollout status "deployment/${GRAFANA_SERVICE}" -n "${K8S_NAMESPACE}" --timeout=180s
+
+                                kubectl port-forward "svc/${PROM_SERVICE}" "${LOCAL_PROM_PORT}:9090" \
+                                    -n "${K8S_NAMESPACE}" > "${REPORTS_DIR}/pf-prom.log" 2>&1 &
+                                PF_PROM=$!
+                                PROM="http://localhost:${LOCAL_PROM_PORT}"
+
+                                for i in $(seq 1 30); do
+                                    curl -fsS "${PROM}/-/ready" > /dev/null 2>&1 && break
+                                    [ "$i" -eq 30 ] && { echo "Prometheus injoignable"; cat "${REPORTS_DIR}/pf-prom.log"; exit 1; }
+                                    sleep 2
+                                done
+
+                                # Prometheus peut avoir redemarre au DEPLOY : on attend un cycle de collecte complet (2 min max)
+                                for i in $(seq 1 12); do
+                                    curl -fsS "${PROM}/api/v1/targets?state=active" -o "${REPORTS_DIR}/prometheus-targets.json"
+                                    python3 ci/runtime_checks.py targets-up "${REPORTS_DIR}/prometheus-targets.json" && break
+                                    sleep 10
+                                done
+
+                                curl -fsS "${PROM}/api/v1/alerts" -o "${REPORTS_DIR}/prometheus-alerts.json"
+                                curl -fsS "${PROM}/api/v1/rules"  -o "${REPORTS_DIR}/prometheus-rules.json"
+
+                                kubectl exec -n "${K8S_NAMESPACE}" "deployment/${GRAFANA_SERVICE}" -- \
+                                    wget -qO- http://localhost:3000/api/health > "${REPORTS_DIR}/grafana-health.json" 2>/dev/null \
+                                    || echo '{}' > "${REPORTS_DIR}/grafana-health.json"
+
+                                # Synthese (exit 1 si cible DOWN ou Grafana KO => UNSTABLE)
+                                python3 ci/runtime_checks.py prometheus "${REPORTS_DIR}"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 24. EMAIL NOTIFICATION (uniquement si le build est SUCCESS)
         // ============================================================
 
         stage('EMAIL NOTIFICATION') {
@@ -801,7 +1016,7 @@ Rapport   : ${env.BUILD_URL}DevSecOps_20Report/
         }
 
         unstable {
-            echo "PIPELINE UNSTABLE - voir le rapport ZAP dans les artefacts (reports/zap-report.html)"
+            echo "PIPELINE UNSTABLE - un contrôle non bloquant a signalé un risque (voir le rapport DevSecOps)"
         }
 
         failure {

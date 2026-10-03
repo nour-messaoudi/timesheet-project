@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
 Génère le rapport DevSecOps du pipeline Jenkins (sans dépendance externe).
-
+ 
 Entrées (dans reports/ et target/) :
   stages.txt, meta.txt, secret-scan.txt, sonar-measures.json,
   trivy-sca.json, trivy-iac.json, trivy-image.json, sbom-cyclonedx.json,
-  zap-report.json, target/surefire-reports/TEST-*.xml, target/site/jacoco/jacoco.xml
-
+  zap-report.json, gauntlt.txt, target/surefire-reports/TEST-*.xml, target/site/jacoco/jacoco.xml,
+  et les synthèses PRODUCTION / OPERATIONS écrites par ci/runtime_checks.py :
+  kubescape-summary.json, lynis-summary.json, falco-summary.json,
+  trivy-operator-summary.json, prometheus-summary.json
+ 
 Sorties (dans reports/) :
   devsecops-report.html + devsecops-report.css  -> rapport visuel
   devsecops-summary.txt                        -> résumé texte (aussi affiché en console)
   summary-line.txt                             -> ligne courte pour la description du build
 """
-
+ 
 import glob
 import html
 import json
@@ -20,9 +23,9 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
-
+ 
 REPORTS = os.environ.get("REPORTS_DIR", "reports")
-
+ 
 # ----------------------------------------------------------------------------
 # Catalogue des stages (noms identiques à ceux du Jenkinsfile)
 # ----------------------------------------------------------------------------
@@ -43,29 +46,40 @@ STAGES = [
     ("PUSH TO DOCKERHUB", "Docker Hub", "Publie l'image validée", "ci"),
     ("DEPLOY", "kubectl · minikube", "Déploie sur Kubernetes (rollback auto si échec)", "ci"),
     ("HEALTH CHECK", "Actuator · Prometheus", "Vérifie que l'application et le monitoring répondent", "ci"),
+    ("CONFIG SAFETY - KUBESCAPE", "Kubescape (NSA · MITRE)", "[PRODUCTION] Conformité de la configuration Kubernetes", "sec"),
+    ("SERVER HARDENING - LYNIS", "Lynis", "[PRODUCTION] Audit de durcissement du serveur Jenkins", "sec"),
     ("DAST - OWASP ZAP", "OWASP ZAP baseline", "Teste l'application en cours d'exécution (DAST)", "sec"),
     ("SECURITY TESTS - GAUNTLT", "Gauntlt (curl · nmap)", "Tests d'attaque BDD sur l'application déployée", "sec"),
+    ("HOST INTRUSION - FALCO", "Falco · Falcosidekick", "[PRODUCTION] Détection d'intrusion en temps réel (attaque simulée)", "sec"),
+    ("CONTINUOUS SCANNING - TRIVY OPERATOR", "Trivy Operator", "[OPERATIONS] Scan continu des workloads en exécution", "sec"),
+    ("CONTINUOUS MONITORING - PROMETHEUS", "Prometheus · Grafana", "[OPERATIONS] Supervision, règles d'alerte, tableaux de bord", "sec"),
     ("EMAIL NOTIFICATION", "Email Extension · Gmail SMTP", "Envoie le rapport par e-mail si le build est SUCCESS", "ci"),
 ]
-
+ 
 SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
-
-
+ 
+# Stages non bloquants : un échec y est affiché UNSTABLE (catchError dans le Jenkinsfile)
+NON_BLOCKING = {
+    "DAST - OWASP ZAP", "SECURITY TESTS - GAUNTLT", "CONFIG SAFETY - KUBESCAPE", "SERVER HARDENING - LYNIS",
+    "HOST INTRUSION - FALCO", "CONTINUOUS SCANNING - TRIVY OPERATOR", "CONTINUOUS MONITORING - PROMETHEUS",
+}
+ 
+ 
 # ----------------------------------------------------------------------------
 # Utilitaires de lecture
 # ----------------------------------------------------------------------------
 def path(name):
     return os.path.join(REPORTS, name)
-
-
+ 
+ 
 def load_json(name):
     try:
         with open(path(name), encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
-
-
+ 
+ 
 def read_kv(name):
     data = {}
     try:
@@ -77,8 +91,8 @@ def read_kv(name):
     except Exception:
         pass
     return data
-
-
+ 
+ 
 def read_stages():
     res = {}
     try:
@@ -90,19 +104,19 @@ def read_stages():
     except Exception:
         pass
     return res
-
-
+ 
+ 
 def esc(v):
     return html.escape(str(v)) if v is not None else ""
-
-
+ 
+ 
 def fmt_dur(sec):
     if sec is None:
         return "—"
     m, s = divmod(int(sec), 60)
     return f"{m} min {s:02d} s" if m else f"{s} s"
-
-
+ 
+ 
 # ----------------------------------------------------------------------------
 # Parsers par outil
 # ----------------------------------------------------------------------------
@@ -119,8 +133,8 @@ def parse_secrets():
     except Exception:
         return None
     return hooks
-
-
+ 
+ 
 def parse_tests():
     files = glob.glob("target/surefire-reports/TEST-*.xml")
     if not files:
@@ -137,8 +151,8 @@ def parse_tests():
         t["tests"] += n; t["failures"] += fa; t["errors"] += er; t["skipped"] += sk; t["time"] += tm
         t["suites"].append((r.get("name", os.path.basename(fp)).split(".")[-1], n, fa + er, sk, tm))
     return t
-
-
+ 
+ 
 def parse_coverage():
     fp = "target/site/jacoco/jacoco.xml"
     if not os.path.exists(fp):
@@ -153,20 +167,20 @@ def parse_coverage():
         total = missed + covered
         cov[c.get("type")] = round(100.0 * covered / total, 1) if total else 0.0
     return cov
-
-
+ 
+ 
 def parse_sonar():
     data = load_json("sonar-measures.json")
     if not data:
         return None
     m = {x["metric"]: x.get("value") for x in data.get("component", {}).get("measures", [])}
-
+ 
     def pick(*keys):
         for k in keys:
             if k in m and m[k] is not None:
                 return m[k]
         return None
-
+ 
     return {
         "reliability": pick("software_quality_reliability_issues", "bugs"),
         "security": pick("software_quality_security_issues", "vulnerabilities"),
@@ -176,8 +190,8 @@ def parse_sonar():
         "duplication": pick("duplicated_lines_density"),
         "ncloc": pick("ncloc"),
     }
-
-
+ 
+ 
 def parse_trivy_vulns(name):
     data = load_json(name)
     if data is None:
@@ -197,8 +211,8 @@ def parse_trivy_vulns(name):
     out["items"].sort(key=lambda x: SEV_ORDER.index(x["sev"]) if x["sev"] in SEV_ORDER else 9)
     out["total"] = len(out["items"])
     return out
-
-
+ 
+ 
 def parse_trivy_iac():
     data = load_json("trivy-iac.json")
     if data is None:
@@ -217,15 +231,15 @@ def parse_trivy_iac():
                                                  "resolution": m.get("Resolution", ""), "files": set()})
             rule["files"].add(r.get("Target", "?"))
     return out
-
-
+ 
+ 
 def parse_sbom():
     data = load_json("sbom-cyclonedx.json")
     if data is None:
         return None
     return len(data.get("components", []) or [])
-
-
+ 
+ 
 def parse_gauntlt():
     try:
         with open(path("gauntlt.txt"), encoding="utf-8", errors="ignore") as f:
@@ -251,8 +265,8 @@ def parse_gauntlt():
             if "# Scenario:" in l:
                 out["failing"].append(l.split("# Scenario:", 1)[1].strip())
     return out
-
-
+ 
+ 
 def parse_zap():
     data = load_json("zap-report.json")
     if data is None:
@@ -272,8 +286,8 @@ def parse_zap():
     order = ["High", "Medium", "Low", "Informational"]
     out["alerts"].sort(key=lambda x: order.index(x["risk"]))
     return out
-
-
+ 
+ 
 def strip_tags(s):
     out, inside = [], False
     for ch in s or "":
@@ -284,26 +298,26 @@ def strip_tags(s):
         elif not inside:
             out.append(ch)
     return "".join(out).strip()
-
-
+ 
+ 
 def git_info():
     try:
         return subprocess.check_output(["git", "log", "-1", "--format=%h — %s (%an)"], text=True).strip()
     except Exception:
         return "—"
-
-
+ 
+ 
 # ----------------------------------------------------------------------------
 # Construction des résultats par stage
 # ----------------------------------------------------------------------------
 def sev_text(counts, keys=("CRITICAL", "HIGH")):
     return " · ".join(f"{k.capitalize()} {counts.get(k, 0)}" for k in keys)
-
-
+ 
+ 
 def build():
     stages_rt = read_stages()
     meta = read_kv("meta.txt")
-
+ 
     secrets = parse_secrets()
     tests = parse_tests()
     cov = parse_coverage()
@@ -315,10 +329,10 @@ def build():
     zap = parse_zap()
     gauntlt = parse_gauntlt()
     qg = meta.get("qualityGate", "N/A")
-
+ 
     key = {}
     level = {}  # ok | warn | ko | na  (verdict sécurité)
-
+ 
     if secrets is not None:
         failed = [h for h, s in secrets if s == "Failed"]
         key["SECRET SECURITY SCAN"] = f"{len(secrets)} contrôles · {len(failed)} en échec"
@@ -352,11 +366,11 @@ def build():
         c = zap["counts"]
         key["DAST - OWASP ZAP"] = f"High {c['High']} · Medium {c['Medium']} · Low {c['Low']} · Info {c['Informational']}"
         level["DAST - OWASP ZAP"] = "ko" if c["High"] else ("warn" if c["Medium"] or c["Low"] else "ok")
-
+ 
     image = os.environ.get("DOCKER_IMAGE", meta.get("image", ""))
     jar = sorted(glob.glob("target/*.jar"))
     jar_txt = f"{os.path.basename(jar[0])} ({os.path.getsize(jar[0]) // (1024 * 1024)} Mo)" if jar else "JAR"
-    key.setdefault("TOOL CHECK", "Java 17, Maven, Docker, kubectl, Trivy, Git, pre-commit, Python OK")
+    key.setdefault("TOOL CHECK", "Java 17, Maven, Docker, kubectl, Trivy, Git, pre-commit, Python, Kubescape, Lynis OK")
     key.setdefault("CHECKOUT FROM GITHUB", "commit " + git_info().split(" — ")[0])
     key.setdefault("CLEAN PROJECT", "target/ nettoyé")
     key.setdefault("BUILD ARTIFACT", jar_txt)
@@ -370,12 +384,43 @@ def build():
         key["SECURITY TESTS - GAUNTLT"] = (f"{gauntlt['passed']}/{gauntlt['scenarios']} scénarios OK"
                                            f" · {gauntlt['failed']} en échec · {gauntlt['steps']} steps")
         level["SECURITY TESTS - GAUNTLT"] = "ko" if gauntlt["failed"] or not gauntlt["scenarios"] else "ok"
-
+ 
+    ks, ly, fa, to, pm = (load_json("kubescape-summary.json"), load_json("lynis-summary.json"),
+                          load_json("falco-summary.json"), load_json("trivy-operator-summary.json"),
+                          load_json("prometheus-summary.json"))
+    if ks:
+        fw = " · ".join(f"{n} {v} %" for n, v in ks.get("frameworks", []))
+        key["CONFIG SAFETY - KUBESCAPE"] = (f"Score {ks.get('score')} % (seuil {ks.get('threshold'):g} %)"
+                                            f" · {fw} · {len(ks.get('failedControls', []))} contrôles en échec")
+        level["CONFIG SAFETY - KUBESCAPE"] = "ok" if (ks.get("score") or 0) >= ks.get("threshold", 60) else "warn"
+    if ly:
+        key["SERVER HARDENING - LYNIS"] = (f"Hardening Index {ly['index']}/100 · {len(ly['warnings'])} avertissement(s)"
+                                           f" · {len(ly['suggestions'])} suggestion(s)")
+        level["SERVER HARDENING - LYNIS"] = "ok" if ly["index"] >= ly.get("minimum", 50) else "warn"
+    if fa:
+        bp = ", ".join(f"{k} {v}" for k, v in fa.get("byPriority", {}).items() if v)
+        key["HOST INTRUSION - FALCO"] = f"{fa['total']} alerte(s) détectée(s) ({bp or 'aucune'}) — attaque simulée"
+        level["HOST INTRUSION - FALCO"] = "ok" if fa["total"] else "ko"
+    if to:
+        t2 = to["totals"]
+        app = to.get("appImage")
+        txt = f"{len(to['images'])} images · Critical {t2['critical']} · High {t2['high']}"
+        txt += (f" · image du build : C{app['critical']}/H{app['high']}" if app else " · image du build : scan en cours")
+        key["CONTINUOUS SCANNING - TRIVY OPERATOR"] = txt
+        level["CONTINUOUS SCANNING - TRIVY OPERATOR"] = ("ko" if app and app["critical"] else
+                                                         "warn" if t2["critical"] or t2["high"] else "ok")
+    if pm:
+        key["CONTINUOUS MONITORING - PROMETHEUS"] = (f"{pm['up']}/{pm['total']} cibles UP · {pm['rules']} règles"
+                                                     f" · {len(pm['firing'])} alerte(s) active(s)"
+                                                     f" · Grafana {'OK' if pm['grafana'] else 'KO'}")
+        level["CONTINUOUS MONITORING - PROMETHEUS"] = ("ko" if pm["up"] < pm["total"] or not pm["grafana"]
+                                                       else "warn" if pm["firing"] else "ok")
+ 
     rows = []
     for name, tool, role, cat in STAGES:
         rt = stages_rt.get(name)
         status = rt["status"] if rt else "SKIPPED"
-        if name in ("DAST - OWASP ZAP", "SECURITY TESTS - GAUNTLT") and status == "FAILED":
+        if name in NON_BLOCKING and status == "FAILED":
             status = "UNSTABLE"
         if status == "RUNNING":
             status = "EN COURS"
@@ -385,13 +430,14 @@ def build():
             "key": key.get(name, "") if status != "SKIPPED" else "Non exécuté (stage précédent en échec)",
             "level": level.get(name, "na") if status != "SKIPPED" else "na",
         })
-
+ 
     return {
         "meta": meta, "rows": rows, "secrets": secrets, "tests": tests, "cov": cov, "sonar": sonar,
         "qg": qg, "sca": sca, "iac": iac, "img": img, "sbom": sbom, "zap": zap, "gauntlt": gauntlt, "image": image,
+        "kubescape": ks, "lynis": ly, "falco": fa, "trivyop": to, "prom": pm,
     }
-
-
+ 
+ 
 # ----------------------------------------------------------------------------
 # Rendu HTML
 # ----------------------------------------------------------------------------
@@ -431,27 +477,27 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
 .links a{margin-right:14px}
 footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
 """
-
+ 
 VERDICT_LABEL = {"ok": "Conforme", "warn": "À surveiller", "ko": "Bloquant", "na": "N/A"}
-
-
+ 
+ 
 def badge(text, cls=None):
     return f'<span class="b {esc(cls or text)}">{esc(text)}</span>'
-
-
+ 
+ 
 def kpi(label, value, detail, level):
     return (f'<div class="kpi {level}"><div class="lbl">{esc(label)}</div>'
             f'<div class="val">{esc(value)}</div><div class="det">{esc(detail)}</div></div>')
-
-
+ 
+ 
 def render_html(d):
     meta = d["meta"]
     result = meta.get("result", "UNKNOWN")
     vcls = {"SUCCESS": "ok", "UNSTABLE": "warn", "FAILURE": "ko"}.get(result, "na")
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
-
+ 
     t, cov, s, sca, iac, img, zap = d["tests"], d["cov"], d["sonar"], d["sca"], d["iac"], d["img"], d["zap"]
-
+ 
     k = []
     if t:
         ko = t["failures"] + t["errors"]
@@ -475,7 +521,28 @@ def render_html(d):
         c = zap["counts"]
         k.append(kpi("DAST (ZAP)", f"{c['High']} High", f"Medium {c['Medium']} · Low {c['Low']}",
                      "ko" if c["High"] else ("warn" if c["Medium"] or c["Low"] else "ok")))
-
+ 
+    if d.get("kubescape"):
+        ks = d["kubescape"]
+        k.append(kpi("Kubescape", f"{ks.get('score')} %", f"conformité NSA/MITRE (seuil {ks.get('threshold'):g} %)",
+                     "ok" if (ks.get("score") or 0) >= ks.get("threshold", 60) else "warn"))
+    if d.get("lynis"):
+        ly = d["lynis"]
+        k.append(kpi("Lynis", f"{ly['index']}/100", "Hardening Index du serveur",
+                     "ok" if ly["index"] >= ly.get("minimum", 50) else "warn"))
+    if d.get("falco"):
+        fa = d["falco"]
+        k.append(kpi("Falco", f"{fa['total']} alertes", "attaque simulée détectée" if fa["total"] else "aucune détection",
+                     "ok" if fa["total"] else "ko"))
+    if d.get("trivyop"):
+        t2 = d["trivyop"]["totals"]
+        k.append(kpi("Trivy Operator", f"{t2['critical']} Critical", f"High {t2['high']} · cluster (images tierces incluses)",
+                     "warn" if t2["critical"] or t2["high"] else "ok"))
+    if d.get("prom"):
+        pm = d["prom"]
+        k.append(kpi("Supervision", f"{pm['up']}/{pm['total']} UP", f"{len(pm['firing'])} alerte(s) Prometheus active(s)",
+                     "ko" if pm["up"] < pm["total"] else ("warn" if pm["firing"] else "ok")))
+ 
     # --- tableau des stages
     srows = []
     for i, r in enumerate(d["rows"], 1):
@@ -484,7 +551,7 @@ def render_html(d):
             f'<div class="muted">{esc(r["role"])}</div></td><td>{esc(r["tool"])}</td>'
             f'<td>{badge(r["status"])}</td><td>{fmt_dur(r["duration"])}</td><td>{esc(r["key"])}</td>'
             f'<td>{badge(VERDICT_LABEL[r["level"]], r["level"]) if r["cat"] == "sec" else ""}</td></tr>')
-
+ 
     parts = [f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rapport DevSecOps #{esc(os.environ.get('BUILD_NUMBER', ''))}</title>
@@ -497,7 +564,7 @@ def render_html(d):
 <p class="intro">Les lignes marquées d'un liseré bleu sont les contrôles de sécurité. « Verdict » indique le niveau de risque détecté.</p>
 <table><tr><th>#</th><th>Stage</th><th>Outil</th><th>Statut</th><th>Durée</th><th>Résultat clé</th><th>Verdict</th></tr>
 {''.join(srows)}</table></section>"""]
-
+ 
     # --- secrets
     if d["secrets"] is not None:
         rows = "".join(f"<tr><td>{esc(h)}</td><td>{badge(st, 'ok' if st == 'Passed' else ('ko' if st == 'Failed' else 'na'))}</td></tr>"
@@ -505,7 +572,7 @@ def render_html(d):
         parts.append(f"""<section><h2>2. Détection de secrets — pre-commit</h2>
 <p class="intro">Recherche de mots de passe, clés et tokens commités par erreur. Bloquant.</p>
 <table><tr><th>Contrôle</th><th>Résultat</th></tr>{rows}</table></section>""")
-
+ 
     # --- tests
     if t:
         rows = "".join(f"<tr><td>{esc(n)}</td><td>{a}</td><td>{f}</td><td>{sk}</td><td>{tm:.2f} s</td></tr>"
@@ -517,7 +584,7 @@ def render_html(d):
         parts.append(f"""<section><h2>3. Tests unitaires et couverture — JUnit / JaCoCo</h2>
 <p class="intro">{t['tests']} tests en {t['time']:.1f} s. Couverture : {esc(cv or 'n/a')}</p>
 <table><tr><th>Classe de test</th><th>Tests</th><th>Échecs</th><th>Ignorés</th><th>Durée</th></tr>{rows}</table></section>""")
-
+ 
     # --- sonar
     sm = s or {}
     link = f' — <a href="{esc(d["meta"].get("sonarUrl", ""))}/dashboard?id={esc(d["meta"].get("sonarKey", ""))}">ouvrir le dashboard</a>' \
@@ -527,7 +594,7 @@ def render_html(d):
 <table><tr><th>Fiabilité (bugs)</th><th>Sécurité (vulnérabilités)</th><th>Security Hotspots</th><th>Maintenabilité</th><th>Couverture</th><th>Duplication</th><th>Lignes de code</th></tr>
 <tr><td>{esc(sm.get('reliability', 'n/a'))}</td><td>{esc(sm.get('security', 'n/a'))}</td><td>{esc(sm.get('hotspots', 'n/a'))}</td>
 <td>{esc(sm.get('maintainability', 'n/a'))}</td><td>{esc(sm.get('coverage', 'n/a'))} %</td><td>{esc(sm.get('duplication', 'n/a'))} %</td><td>{esc(sm.get('ncloc', 'n/a'))}</td></tr></table></section>""")
-
+ 
     # --- trivy vulns
     def vuln_section(num, title, intro, data, extra=""):
         if data is None:
@@ -544,14 +611,14 @@ def render_html(d):
             det = '<div class="empty">Aucune vulnérabilité HIGH/CRITICAL détectée.</div>'
         return (f"<section><h2>{num}. {title}</h2><p class='intro'>{intro} {extra}</p>"
                 f"<table><tr><th>Cible analysée</th><th>Type</th><th>Vulnérabilités</th></tr>{tg}</table><br>{det}</section>")
-
+ 
     parts.append(vuln_section(5, "SCA — dépendances Maven (Trivy fs)",
                               "CVE HIGH/CRITICAL dans les bibliothèques déclarées dans pom.xml. Non bloquant (le gate est sur l'image).",
                               sca))
     parts.append(vuln_section(6, "Scan de l'image Docker (Trivy image) — Security Gate",
                               "CVE HIGH/CRITICAL corrigeables dans l'OS de base et le JAR. <b>Bloquant</b> : l'image n'est pas poussée si > 0.",
                               img, f"SBOM CycloneDX : {d['sbom']} composants." if d["sbom"] is not None else ""))
-
+ 
     # --- IaC
     if iac is not None:
         fr = "".join(f"<tr><td><code>{esc(f)}</code></td><td>{ok}</td><td>{ko}</td></tr>" for f, ok, ko in iac["files"])
@@ -565,7 +632,7 @@ def render_html(d):
         parts.append(f"""<section><h2>7. IaC — Dockerfile &amp; manifests Kubernetes (Trivy config)</h2>
 <p class="intro">{iac['total']} mauvaises configurations HIGH/CRITICAL. Non bloquant.</p>
 <table><tr><th>Fichier</th><th>Contrôles OK</th><th>Échecs</th></tr>{fr}</table><br>{det}</section>""")
-
+ 
     # --- ZAP
     if zap is not None:
         if zap["alerts"]:
@@ -580,7 +647,7 @@ def render_html(d):
         parts.append(f"""<section><h2>8. DAST — OWASP ZAP baseline</h2>
 <p class="intro">Scan passif de l'application déployée. High {c['High']} · Medium {c['Medium']} · Low {c['Low']} · Info {c['Informational']}. Non bloquant.
 Rapport complet : <a href="zap-report.html">zap-report.html</a></p>{det}</section>""")
-
+ 
     # --- Gauntlt
     g = d.get("gauntlt")
     if g is not None:
@@ -592,28 +659,87 @@ Rapport complet : <a href="zap-report.html">zap-report.html</a></p>{det}</sectio
 <p class="intro">Attaques BDD (curl, nmap) sur l'application déployée : {g['passed']}/{g['scenarios']} scénarios OK,
 {g['failed']} en échec, {g['steps']} steps. Non bloquant. Sortie complète : <a href="gauntlt.txt">gauntlt.txt</a></p>
 <table><tr><th>Scénario</th><th>Résultat</th></tr>{gr}</table></section>""")
-
+ 
+    # --- PRODUCTION / OPERATIONS
+    ks = d.get("kubescape")
+    if ks:
+        fw = "".join(f"<tr><td>{esc(n)}</td><td>{esc(v)} %</td></tr>" for n, v in ks.get("frameworks", []))
+        fc = "".join(f"<tr><td>{badge(c['severity'])}</td><td><b>{esc(c['id'])}</b></td><td>{esc(c['name'])}</td>"
+                     f"<td>{esc(c['failedResources'])}</td></tr>" for c in ks.get("failedControls", [])[:20])
+        det = (f"<table><tr><th>Sévérité</th><th>Contrôle</th><th>Description</th><th>Ressources en échec</th></tr>{fc}</table>"
+               if fc else '<div class="empty">Tous les contrôles sont conformes.</div>')
+        parts.append(f"""<section><h2>10. PRODUCTION — Configuration Safety Checks (Kubescape)</h2>
+<p class="intro">Conformité des ressources du namespace aux référentiels NSA-CISA et MITRE ATT&amp;CK.
+Score global {badge(str(ks.get('score')) + ' %', 'ok' if (ks.get('score') or 0) >= ks.get('threshold', 60) else 'warn')}
+(seuil {esc(ks.get('threshold'))} %). Non bloquant.</p>
+<table><tr><th>Référentiel</th><th>Score</th></tr>{fw}</table><br>{det}</section>""")
+    ly = d.get("lynis")
+    if ly:
+        lr = "".join(f"<tr><td>{badge('Warning', 'ko')}</td><td><b>{esc(w['id'])}</b></td><td>{esc(w['text'])}</td></tr>"
+                     for w in ly["warnings"][:15])
+        lr += "".join(f"<tr><td>{badge('Suggestion', 'na')}</td><td><b>{esc(s2['id'])}</b></td><td>{esc(s2['text'])}</td></tr>"
+                      for s2 in ly["suggestions"][:15])
+        parts.append(f"""<section><h2>11. PRODUCTION — Server Hardening (Lynis)</h2>
+<p class="intro">Audit du serveur qui exécute le pipeline ({esc(ly.get('os', ''))}).
+Hardening Index {badge(str(ly['index']) + '/100', 'ok' if ly['index'] >= ly.get('minimum', 50) else 'warn')}
+(minimum {esc(ly.get('minimum'))}). {len(ly['warnings'])} avertissement(s), {len(ly['suggestions'])} suggestion(s). Non bloquant.</p>
+<table><tr><th>Type</th><th>Test</th><th>Détail</th></tr>{lr}</table></section>""")
+    fa = d.get("falco")
+    if fa:
+        fr = "".join(f"<tr><td>{esc(n)}</td><td>{esc(r)}</td></tr>" for r, n in fa.get("rules", [])[:15])
+        det = (f"<table><tr><th>Occurrences</th><th>Règle Falco déclenchée</th></tr>{fr}</table>"
+               if fr else '<div class="empty" style="background:var(--kobg);color:var(--ko)">Aucune alerte : la détection ne fonctionne pas.</div>')
+        parts.append(f"""<section><h2>12. PRODUCTION — Host Intrusion Detection (Falco)</h2>
+<p class="intro">Le pipeline simule un comportement d'attaquant dans le pod <code>{esc(fa.get('targetPod', ''))}</code>
+(lecture de fichiers d'authentification, recherche de clés privées) et vérifie que Falco le détecte en temps réel.
+{fa['total']} alerte(s), dont {fa.get('onTargetPod', 0)} sur le pod ciblé. Non bloquant.</p>{det}</section>""")
+    to = d.get("trivyop")
+    if to:
+        ir = "".join(f"<tr><td><code>{esc(r['image'])}</code></td><td>{esc(r['workload'])}</td><td>{r['critical']}</td>"
+                     f"<td>{r['high']}</td><td>{r['medium']}</td><td>{r['low']}</td></tr>" for r in to["images"])
+        app = to.get("appImage")
+        apptxt = (f"Image du build <code>{esc(app['image'])}</code> : Critical {app['critical']} · High {app['high']}."
+                  if app else "Le rapport de l'image du build n'était pas encore disponible (scan en cours).")
+        parts.append(f"""<section><h2>13. OPERATIONS — Continuous Scanning (Trivy Operator)</h2>
+<p class="intro">Scan permanent des images <b>réellement en exécution</b> dans le namespace, y compris les images tierces
+(MySQL, Prometheus, Grafana) que le pipeline ne construit pas. {apptxt} Secrets exposés : {to['secrets']}. Non bloquant.</p>
+<table><tr><th>Image</th><th>Workload</th><th>Critical</th><th>High</th><th>Medium</th><th>Low</th></tr>{ir}</table></section>""")
+    pm = d.get("prom")
+    if pm:
+        tr = "".join(f"<tr><td>{esc(t['job'])}</td><td>{badge(t['health'].upper(), 'ok' if t['health'] == 'up' else 'ko')}</td>"
+                     f"<td class='muted'>{esc(t['error'])}</td></tr>" for t in pm["targets"])
+        ar = "".join(f"<tr><td>{badge(a['severity'] or '?', 'ko' if a['severity'] == 'critical' else 'warn')}</td>"
+                     f"<td><b>{esc(a['name'])}</b></td><td>{esc(a['summary'])}</td></tr>" for a in pm["firing"])
+        al = (f"<table><tr><th>Sévérité</th><th>Alerte active</th><th>Résumé</th></tr>{ar}</table>"
+              if ar else '<div class="empty">Aucune alerte Prometheus active.</div>')
+        parts.append(f"""<section><h2>14. OPERATIONS — Continuous Monitoring (Prometheus &amp; Grafana)</h2>
+<p class="intro">{pm['up']}/{pm['total']} cibles supervisées UP · {pm['rules']} règles d'alerte (disponibilité + sécurité) ·
+Grafana {badge('OK', 'ok') if pm['grafana'] else badge('KO', 'ko')}. Non bloquant.</p>
+<table><tr><th>Cible</th><th>État</th><th>Erreur</th></tr>{tr}</table><br>{al}</section>""")
+ 
     parts.append("""<section><h2>Rapports bruts</h2><p class="links">
 <a href="trivy-sca.txt">trivy-sca.txt</a><a href="trivy-iac.txt">trivy-iac.txt</a>
 <a href="trivy-image.txt">trivy-image.txt</a><a href="sbom-cyclonedx.json">sbom-cyclonedx.json</a>
 <a href="zap-report.html">zap-report.html</a><a href="secret-scan.txt">secret-scan.txt</a>
-<a href="gauntlt.txt">gauntlt.txt</a></p></section>""")
+<a href="gauntlt.txt">gauntlt.txt</a><a href="kubescape.txt">kubescape.txt</a><a href="lynis.txt">lynis.txt</a>
+<a href="falco.txt">falco.txt</a><a href="trivy-operator-summary.txt">trivy-operator-summary.txt</a>
+<a href="prometheus-summary.txt">prometheus-summary.txt</a></p></section>""")
     parts.append(f"<footer>Rapport généré automatiquement par ci/devsecops_report.py — {now}</footer></div></body></html>")
     return "\n".join(parts)
-
-
+ 
+ 
 # ----------------------------------------------------------------------------
 # Résumé texte (console Jenkins) + ligne courte
 # ----------------------------------------------------------------------------
 def render_text(d):
     lines = ["=" * 100, " RAPPORT DEVSECOPS — résumé par stage", "=" * 100,
-             f" {'#':<3}{'STAGE':<28}{'STATUT':<11}{'DURÉE':<12}RÉSULTAT CLÉ", "-" * 100]
+             f" {'#':<3}{'STAGE':<38}{'STATUT':<11}{'DURÉE':<12}RÉSULTAT CLÉ", "-" * 100]
     for i, r in enumerate(d["rows"], 1):
-        lines.append(f" {i:<3}{r['name'][:27]:<28}{r['status']:<11}{fmt_dur(r['duration']):<12}{r['key']}")
+        lines.append(f" {i:<3}{r['name'][:37]:<38}{r['status']:<11}{fmt_dur(r['duration']):<12}{r['key']}")
     lines.append("=" * 100)
     return "\n".join(lines)
-
-
+ 
+ 
 def summary_line(d):
     p = [f"QG {d['qg']}"]
     if d["tests"]:
@@ -633,9 +759,20 @@ def summary_line(d):
     if d.get("gauntlt") is not None:
         g = d["gauntlt"]
         p.append(f"Gauntlt {g['passed']}/{g['scenarios']}")
+    if d.get("kubescape"):
+        p.append(f"Kubescape {d['kubescape'].get('score')}%")
+    if d.get("lynis"):
+        p.append(f"Lynis {d['lynis']['index']}")
+    if d.get("falco"):
+        p.append(f"Falco {d['falco']['total']}")
+    if d.get("trivyop"):
+        t2 = d["trivyop"]["totals"]
+        p.append(f"TrivyOp C{t2['critical']}/H{t2['high']}")
+    if d.get("prom"):
+        p.append(f"Prom {d['prom']['up']}/{d['prom']['total']}")
     return " | ".join(p)
-
-
+ 
+ 
 def main():
     os.makedirs(REPORTS, exist_ok=True)
     d = build()
@@ -655,7 +792,10 @@ def main():
         f.write(summary_line(d) + "\n")
     print(txt)
     print("Rapport HTML : " + path("devsecops-report.html"))
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
+ 
+
+

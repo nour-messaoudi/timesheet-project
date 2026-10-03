@@ -1,22 +1,148 @@
+# ==========================================================
+#  ConfigMap Prometheus : configuration de collecte + règles d'alerte
+#  (appliqué par le stage DEPLOY du Jenkinsfile)
+# ==========================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
   namespace: timesheet-platform
+  labels:
+    app: prometheus
 data:
   prometheus.yml: |
+    # ==========================================================
+    #  Prometheus - Timesheet DevSecOps (namespace timesheet-platform)
+    #  Monté dans le conteneur : /etc/prometheus/prometheus.yml
+    # ==========================================================
     global:
       scrape_interval: 15s
-
+      evaluation_interval: 15s
+      external_labels:
+        environment: minikube
+        project: timesheet-devsecops
+ 
+    rule_files:
+      - /etc/prometheus/alerts.yml
+ 
     scrape_configs:
-
-      - job_name: "prometheus"
+      # --- Prometheus lui-même ---
+      - job_name: prometheus
         static_configs:
-          - targets:
-              - "localhost:9090"
-
-      - job_name: "timesheet"
+          - targets: ['localhost:9090']
+ 
+      # --- Application Spring Boot (Micrometer) ---
+      - job_name: timesheet-app
         metrics_path: /timesheet-devops/actuator/prometheus
         static_configs:
-          - targets:
-              - "timesheet:8082"
+          - targets: ['timesheet:8082']
+            labels:
+              application: timesheet
+ 
+      # --- Nœud minikube : CPU, RAM, disque, réseau ---
+      - job_name: node-exporter
+        static_configs:
+          - targets: ['node-exporter:9100']
+ 
+      # --- État des objets Kubernetes : pods, déploiements, redémarrages ---
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ['kube-state-metrics:8080']
+ 
+      # --- Sécurité : vulnérabilités détectées en continu (Trivy Operator) ---
+      # Service headless (ClusterIP None) : on vise directement le port du pod (8080)
+      - job_name: trivy-operator
+        static_configs:
+          - targets: ['trivy-operator.trivy-system.svc:8080']
+ 
+      # --- Sécurité : détection d'intrusion (Falco via Falcosidekick) ---
+      - job_name: falcosidekick
+        static_configs:
+          - targets: ['falco-falcosidekick.falco.svc:2801']
+  alerts.yml: |
+    # ==========================================================
+    #  Règles d'alerte - Timesheet DevSecOps
+    #  Monté dans le conteneur : /etc/prometheus/alerts.yml
+    # ==========================================================
+    groups:
+      # ---------------- DISPONIBILITÉ ----------------
+      - name: disponibilite
+        rules:
+          - alert: CibleInjoignable
+            expr: up == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "La cible {{ $labels.job }} ({{ $labels.instance }}) ne répond plus"
+ 
+          - alert: ApplicationDown
+            expr: up{job="timesheet-app"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "L'application Timesheet est indisponible"
+ 
+          - alert: PodRedemarreEnBoucle
+            expr: increase(kube_pod_container_status_restarts_total{namespace="timesheet-platform"}[15m]) > 3
+            labels:
+              severity: warning
+            annotations:
+              summary: "Le pod {{ $labels.pod }} redémarre en boucle"
+ 
+          - alert: MemoireJVMElevee
+            expr: sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.9
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Heap JVM utilisée à plus de 90 %"
+ 
+      # ---------------- SÉCURITÉ ----------------
+      - name: securite
+        rules:
+          - alert: RafaleErreurs5xx
+            expr: sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) > 1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Taux élevé d'erreurs serveur 5xx (attaque ou panne)"
+ 
+          - alert: BruteForcePossible
+            expr: sum(rate(http_server_requests_seconds_count{status=~"401|403"}[5m])) > 5
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Rafale de réponses 401/403 : tentative de brute-force possible"
+ 
+          - alert: ScanDeRepertoires
+            expr: sum(rate(http_server_requests_seconds_count{status="404"}[5m])) > 10
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Rafale de 404 : scan de répertoires possible (dirb, ZAP...)"
+ 
+          - alert: VulnerabiliteCritique
+            expr: sum(trivy_image_vulnerabilities{severity="Critical"}) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "Trivy Operator a détecté au moins une CVE CRITICAL dans le cluster"
+ 
+          - alert: VulnerabilitesHautes
+            expr: sum(trivy_image_vulnerabilities{severity="High"}) > 0
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} CVE HIGH détectées dans les images du cluster"
+ 
+          - alert: IntrusionFalco
+            expr: sum(increase(falcosecurity_falcosidekick_falco_events_total{priority=~"(?i)critical|error|warning"}[5m])) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "Falco a détecté un comportement suspect dans un conteneur"
